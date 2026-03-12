@@ -1,15 +1,18 @@
 # @package _global_
+# Fast-compiling debug config: short seq, large mini_batch (no inner scan), no grad accum.
 defaults:
   - override /training: 125m/pretrain-8K
   - override /model: toy_small
   - _self_
 
 training:
-  exp_name: pretrain-125m-e2e
+  exp_name: pretrain-125m-e2e-debug
   train_mode: meta
-  global_batch_size: 64
-  global_batch_size: 64
-  accum_steps: 64
+  seq_length: 128
+  global_batch_size: 1
+  accum_steps: 1
+  total_steps: 10
+  log_wandb: False
   spec_inner: ["language_model.**.suffix_blocks.feed_forward_prime.**"]
   ilr_init: 0.1
   optimizer_inner:
@@ -21,10 +24,9 @@ model:
   seq_modeling_block: SWA
   force_flash: False
   unroll_block_scan: True
-  # This will be unstable, but shorter compiler times
-  mini_batch_size: 1
-  sliding_window_size: 8192
+  mini_batch_size: 128
+  sliding_window_size: 128
   rope_theta: 500000
   prime: True
-  suffix_len: 3
-  intermediate_size: 1664
+  suffix_len: 2
+  intermediate_size: 128

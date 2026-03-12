@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 
 import jax
@@ -57,8 +58,7 @@ class WandbLogger:
         )
 
         if self.is_master:
-            # Pass API key directly to Api()
-            wandb.login(key=wandb_key)
+            os.environ["WANDB_API_KEY"] = wandb_key
             api = wandb.Api(api_key=wandb_key)
             runs = api.runs(f"{self.entity}/{self.project}", filters={"display_name": self.exp_name})
             num_existing = len(runs)
