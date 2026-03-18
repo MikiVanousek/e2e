@@ -1,0 +1,25 @@
+# Chinchilla recipe: 20 tokens/param → 14M × 20 = 280M tokens
+# total_steps = 280M / (global_batch_size × seq_length) = 280M / (64 × 8192) ≈ 534
+defaults:
+  - /training/base_training@_global_.training
+
+tokenizer_name: meta-llama/Llama-3.1-8B
+dataset_name: dclm_filter_8k
+data_split: train
+
+total_steps: 534
+seq_length: 8192
+global_batch_size: 64
+ilr_warmup_steps: 54
+
+optimizer_outer:
+  optimizer_type: adamw
+  b1: 0.9
+  b2: 0.95
+  clip_gradient: 1.0
+  end_lr: 1e-05
+  init_lr: 0.0
+  lr: 3e-03
+  lr_decay_steps: 534
+  lr_warmup_steps: 54
+  weight_decay: 0.1

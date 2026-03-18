@@ -23,6 +23,7 @@ from ttt.model.sharding import ModelSharding
 from ttt.model.transformer import MetaModel
 from ttt.optimizers import make_optimizer
 from ttt.utils.jax_utils import eval_shape_and_sharding, get_custom_tqdm, initialize_distibuted, master_log, set_random_seed, tree_rearrange
+from ttt.utils.memory_utils import log_memory_breakdown
 
 register_configs()
 
@@ -51,6 +52,8 @@ def _make_train_iterator(cfg: Config, model_cfg, data_sharding: jax.sharding.Sha
             repeat=True,
             bos_token_id=model_cfg.bos_token_id,
             eos_token_id=model_cfg.eos_token_id,
+            vocab_size=model_cfg.vocab_size,
+            tokenizer_name=cfg.training.tokenizer_name,
         )
         if not cfg.training.dummy_dataset
         else dummy_dataset(
@@ -101,8 +104,7 @@ def _main(cfg: Config) -> None:
     wandb_logger = WandbLogger(
         entity=cfg.training.wandb_entity,
         project=cfg.training.wandb_project,
-        exp_name=cfg.training.exp_name,
-        load_part=cfg.training.load_part,
+        run_name=cfg.training.run_name,
         log_dir=log_dir,
         wandb_key=cfg.training.wandb_key,
         logging_process=0,
@@ -142,11 +144,9 @@ def _main(cfg: Config) -> None:
         # Should be sharded the same way as the model parameters
         return opt_state
 
-    continued_run = wandb_logger.preexisting
-    master_log(logger, f"Wandb preexisting: {continued_run}")
-    if (continued_run and checkpointer.checkpoint_exists()) or cfg.training.load_part != "none":
-        if continued_run and checkpointer.checkpoint_exists():
-            load_part = "all"  # Resuming from the current checkpointing directory requires the optimizer and loop state
+    if checkpointer.checkpoint_exists() or cfg.training.load_part != "none":
+        if checkpointer.checkpoint_exists():
+            load_part = "all"
             load_checkpointer = checkpointer
         else:
             assert cfg.checkpoint.resume_checkpoint_dir is not None
@@ -205,6 +205,7 @@ def _main(cfg: Config) -> None:
         num_non_embedding_params -= model.language_model.lm_head.weight.size
     logger.info(f"#Trainable params: {num_trainable_params}")
     logger.info(f"#Non-embed params: {num_non_embedding_params}")
+    log_memory_breakdown(model, opt_state, step=-1, wandb_logger=wandb_logger)
 
     M = MetaModel.MetricType
     evaluator = Evaluator(
@@ -235,7 +236,16 @@ def _main(cfg: Config) -> None:
             batch = to_sharded_batch(next(train_ds_iter))
 
             state = state.set(model.step_index, jnp.array(step, dtype=jnp.int32))
-            model, opt_state, loss, metrics = train_on_sequence(state, model, opt_state, batch, cfg)
+            try:
+                model, opt_state, loss, metrics = train_on_sequence(state, model, opt_state, batch, cfg)
+            except Exception:
+                if step == start_step:
+                    log_memory_breakdown(model, opt_state, step=step, wandb_logger=wandb_logger)
+                raise
+
+            if step == start_step:
+                log_memory_breakdown(model, opt_state, step=step, wandb_logger=wandb_logger)
+
             loss_ce = metrics[M.loss].mean()
 
             update = {
@@ -276,7 +286,10 @@ def main(cfg: Config):
         import jax
 
         jax.config.update("jax_compilation_cache_dir", cfg.backend.compilation_cache_dir)
+        jax.config.update("jax_persistent_cache_min_entry_size_bytes", 0)
+        jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
+    logging.getLogger("jax.experimental.compilation_cache.compilation_cache").setLevel(logging.DEBUG)
     _main(cfg)
 
 

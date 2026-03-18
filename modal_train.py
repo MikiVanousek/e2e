@@ -125,19 +125,20 @@ image = (
 )
 
 
-
+GPU_COUNT = 1
 @app.function(
     image=image,
-    gpu="H100",
+    gpu=f"B200:{GPU_COUNT}",
     timeout=6 * 3600,
     secrets=[modal.Secret.from_name("default")],
     volumes={"/data": dataset_volume, "/checkpoints": checkpoint_volume, "/jax_cache": cache_volume},
 )
-def train(experiment: str, wandb_entity: str = "miki-aisle", wandb_project: str = "e2e-ttt", fast_compile: bool = False):
+def train(experiment: str, run_name: str, wandb_entity: str = "miki-aisle", wandb_project: str = "e2e-ttt", fast_compile: bool = False):
     dataset_volume.reload()
     cache_volume.reload()
 
     env = os.environ.copy()
+    env.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.95")
     if fast_compile:
         env["XLA_FLAGS"] = " ".join([
             env.get("XLA_FLAGS", ""),
@@ -152,10 +153,11 @@ def train(experiment: str, wandb_entity: str = "miki-aisle", wandb_project: str 
         "deploy_paths.data.dclm_filter_8k=/data/data.zarr",
         "deploy_paths.data.books3=/data/books3",
         "training.checkpoint_path=/checkpoints",
+        f"training.run_name={run_name}",
         f"training.wandb_entity={wandb_entity}",
         f"training.wandb_project={wandb_project}",
         f"training.wandb_key={os.environ['WANDB_API_KEY']}",
-        "backend.num_devices=1",
+        f"backend.num_devices={GPU_COUNT}",
         "backend.compilation_cache_dir=/jax_cache",
     ]
 
@@ -176,11 +178,13 @@ def debug_versions():
 @app.local_entrypoint()
 def main(
     experiment: str = "125m/pretrain/simple",
+    run_name: str = "",
     wandb_entity: str = "miki-aisle",
     wandb_project: str = "e2e-ttt",
     fast_compile: bool = False,
 ):
-    train.remote(experiment=experiment, wandb_entity=wandb_entity, wandb_project=wandb_project, fast_compile=fast_compile)
+    assert run_name, "--run-name is required"
+    train.remote(experiment=experiment, run_name=run_name, wandb_entity=wandb_entity, wandb_project=wandb_project, fast_compile=fast_compile)
 
 
 @app.local_entrypoint()

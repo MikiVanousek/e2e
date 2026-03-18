@@ -1,0 +1,17 @@
+# @package _global_
+defaults:
+  - override /training: 14m/pretrain-8K
+  - override /model: 14m
+  - _self_
+
+training:
+  exp_name: pretrain-14m-fa
+  train_mode: pretrain
+
+model:
+  seq_modeling_block: self_attention
+  force_flash: True
+  mini_batch_size: 8192
+  rope_theta: 500000
+  remat_block: nothing_saveable
+  remat_block_bwd: nothing_saveable

@@ -1,0 +1,14 @@
+defaults:
+  - base_model
+
+name: 14m
+vocab_size: 8192
+bos_token_id: 0
+eos_token_id: 1
+num_hidden_layers: 6
+hidden_size: 384
+num_attention_heads: 6
+intermediate_size: 1024
+initializer_range: 0.02
+rms_norm_eps: 1e-6
+tie_word_embeddings: True

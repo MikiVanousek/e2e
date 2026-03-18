@@ -1,11 +1,11 @@
 # @package _global_
 defaults:
-  - override /training: 125m/pretrain-8K
-  - override /model: 125m
+  - override /training: 14m/pretrain-8K
+  - override /model: 14m
   - _self_
 
 training:
-  exp_name: pretrain-125m-e2e
+  exp_name: pretrain-14m-e2e
   train_mode: meta
   spec_inner: ["language_model.**.suffix_blocks.feed_forward_prime.**"]
   ilr_init: 0.1
@@ -13,8 +13,7 @@ training:
     optimizer_type: sgd
     lr: 1
     clip_gradient: 1.0
-  accum_steps: 4
-
+  accum_steps: 2
 
 model:
   seq_modeling_block: SWA
@@ -25,4 +24,4 @@ model:
   rope_theta: 500000
   prime: True
   suffix_len: 3
-  intermediate_size: 1664
+  intermediate_size: 832

@@ -1,14 +1,17 @@
+from __future__ import annotations
+
 import grain.python as grain
 import jax
 import numpy as np
 import zarr.codecs
 import zarr.storage
 
+from ttt.dataloader.retokenizer import LLAMA_3_VOCAB_SIZE, Retokenizer
 from ttt.model.data import Batch
 
 
 class Dataset(grain.RandomAccessDataSource):
-    def __init__(self, *, path: str, split: str, seq_len: int):
+    def __init__(self, *, path: str, split: str, seq_len: int, retokenizer: Retokenizer | None = None):
         codec = zarr.codecs.BloscCodec(cname="zstd", clevel=3, shuffle=zarr.codecs.BloscShuffle.shuffle)
 
         store = zarr.storage.LocalStore(path, read_only=True)
@@ -17,10 +20,16 @@ class Dataset(grain.RandomAccessDataSource):
 
         self.split = self._dataset
         self.seq_len = seq_len
+        self.retokenizer = retokenizer
 
     def __getitem__(self, idx):
         sample = self.split[idx * self.seq_len : (idx + 1) * self.seq_len + 1]
         assert len(sample) == (self.seq_len + 1), "Loader got a sequence with the wrong length!"
+
+        if self.retokenizer is not None:
+            sample = self.retokenizer(sample)[: self.seq_len + 1]
+            assert len(sample) == (self.seq_len + 1), "Retokenization produced fewer tokens than expected!"
+
         return sample
 
     def __len__(self):
@@ -67,6 +76,8 @@ def lm_dataset(
     shard_index: int | None = None,
     shard_count: int | None = None,
     shuffle: bool = True,
+    vocab_size: int | None = None,
+    tokenizer_name: str | None = None,
 ) -> grain.MapDataset:
     if shard_index is None:
         shard_index = jax.process_index()
@@ -76,7 +87,12 @@ def lm_dataset(
     assert global_batch_size % shard_count == 0
     host_batch_size = global_batch_size // shard_count
 
-    source = Dataset(path=path, split=split, seq_len=seq_len)
+    retokenizer = None
+    if vocab_size is not None and vocab_size < LLAMA_3_VOCAB_SIZE:
+        assert tokenizer_name is not None, "tokenizer_name is required when vocab_size < LLAMA_3_VOCAB_SIZE"
+        retokenizer = Retokenizer(tokenizer_name, vocab_size, new_bos=bos_token_id, new_eos=eos_token_id)
+
+    source = Dataset(path=path, split=split, seq_len=seq_len, retokenizer=retokenizer)
     dataset = grain.MapDataset.source(source)
 
     if shuffle:

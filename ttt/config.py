@@ -151,6 +151,7 @@ class TrainingConfig:
     exp_dir: str = "./experiments"
     exp_folder: str = "demo"
     exp_name: str = MISSING
+    run_name: str = MISSING
     resume_exp_name: str = ""
     resume_step: int | None = None
     eval_mode: bool = False

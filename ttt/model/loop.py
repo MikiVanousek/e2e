@@ -71,6 +71,8 @@ class Evaluator:
                 shuffle=False,
                 bos_token_id=config.model.bos_token_id,
                 eos_token_id=config.model.eos_token_id,
+                vocab_size=config.model.vocab_size,
+                tokenizer_name=config.training.tokenizer_name,
             )
             if not config.training.dummy_dataset
             else dummy_dataset(

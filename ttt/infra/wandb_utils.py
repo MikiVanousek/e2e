@@ -1,17 +1,14 @@
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import jax
-import jax.experimental.multihost_utils
-import jax.numpy as jnp
 import numpy as np
 from hydra.core.hydra_config import HydraConfig
 
-from ttt.config import TrainingConfig
 from ttt.utils.jax_utils import master_log
 
-LoadPart = TrainingConfig.LoadPart
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -19,24 +16,23 @@ logger.setLevel(logging.INFO)
 class WandbLogger:
     """
     Handle initialization and logging of a W&B run.
+
+    Every launch creates a new W&B run. Runs sharing the same ``run_name``
+    are grouped together via the W&B *group* field so they can be compared
+    side-by-side.
     """
 
     def __init__(
         self,
         entity: str,
         project: str,
-        exp_name: str,
-        load_part: LoadPart,
+        run_name: str,
         log_dir: Path,
         wandb_key: str,
         logging_process: int,
         config: dict = None,
         enabled: bool = True,
     ):
-        """
-        Initialize logger. No-op if calling process is not master.
-        We now initialize immediately here rather than in a separate function.
-        """
         import wandb
         from wandb.sdk.wandb_settings import Settings
 
@@ -44,42 +40,31 @@ class WandbLogger:
         self.is_master = jax.process_index() == logging_process
         self.entity = entity
         self.project = project
-        self.exp_name = exp_name
-        self.load_part = load_part
+        self.run_name = run_name
         self.enabled = enabled
         self.run = None
         self.log_dir = log_dir
 
-        # Settings for wandb.init()
         self.wandb_settings = Settings(
             api_key=wandb_key,
             entity=self.entity,
             project=self.project,
         )
 
-        if self.is_master:
-            os.environ["WANDB_API_KEY"] = wandb_key
-            api = wandb.Api(api_key=wandb_key)
-            runs = api.runs(f"{self.entity}/{self.project}", filters={"display_name": self.exp_name})
-            num_existing = len(runs)
-        else:
-            num_existing = -1
-
-        num_existing = jax.experimental.multihost_utils.broadcast_one_to_all(jnp.asarray(num_existing), self.is_master).item()
-        self.preexisting = num_existing > 0
-
         if self.is_master and self.enabled:
-            if num_existing == 0:
-                config["overrides"] = list(HydraConfig.get().overrides.task) + list(HydraConfig.get().overrides.hydra)
-                self.run = wandb.init(project=self.project, entity=self.entity, name=self.exp_name, config=config, settings=self.wandb_settings)
-                master_log(logger, f"Initialized new run: {self.run.name} (ID: {self.run.id})")
-            else:
-                if num_existing > 1:
-                    runs = sorted(runs, key=lambda r: r.created_at, reverse=True)
-                    master_log(logger, f"Warning: Multiple runs found with name '{self.exp_name}'. Using the latest run: {runs[0].id}")
-                self.run = runs[0]
-                resumed_run = wandb.init(project=self.project, entity=self.entity, id=self.run.id, resume="allow", settings=self.wandb_settings)
-                master_log(logger, f"Resumed existing run: {resumed_run.name} (ID: {resumed_run.id})")
+            os.environ["WANDB_API_KEY"] = wandb_key
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+            display_name = f"{self.run_name}-{timestamp}"
+            config["overrides"] = list(HydraConfig.get().overrides.task) + list(HydraConfig.get().overrides.hydra)
+            self.run = wandb.init(
+                project=self.project,
+                entity=self.entity,
+                group=self.run_name,
+                name=display_name,
+                config=config,
+                settings=self.wandb_settings,
+            )
+            master_log(logger, f"Initialized new run: {self.run.name} (ID: {self.run.id}, group: {self.run_name})")
 
     def log(self, metrics: dict, step: int):
         """

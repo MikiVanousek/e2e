@@ -1,0 +1,18 @@
+# @package _global_
+defaults:
+  - override /training: 14m/ext
+  - override /model: 14m
+  - _self_
+
+training:
+  exp_name: ext-14m-fa-32K
+  seq_length: 32768
+  global_batch_size: 32
+
+model:
+  seq_modeling_block: self_attention
+  force_flash: True
+  mini_batch_size: 32768
+  rope_theta: 2000000
+  remat_block: nothing_saveable
+  remat_block_bwd: nothing_saveable

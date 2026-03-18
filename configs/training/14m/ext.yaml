@@ -1,0 +1,21 @@
+# Extension fine-tuning uses 5% of pre-training tokens: 5% × 280M = 14M tokens
+# total_steps = 14M / 1M (batch size in tokens, doubled from pretrain) ≈ 14
+defaults:
+  - /training/base_training@_global_.training
+
+dataset_name: books3
+
+total_steps: 14
+ilr_warmup_steps: 0
+
+optimizer_outer:
+  optimizer_type: adamw
+  b1: 0.9
+  b2: 0.95
+  clip_gradient: 1.0
+  end_lr: 1e-05
+  init_lr: 0.0
+  lr: 4e-04
+  lr_decay_steps: 14
+  lr_warmup_steps: 1
+  weight_decay: 0.1
