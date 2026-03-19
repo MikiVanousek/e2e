@@ -139,12 +139,16 @@ def train(experiment: str, run_name: str, wandb_entity: str = "miki-aisle", wand
 
     env = os.environ.copy()
     env.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.95")
+    xla_extra = []
     if fast_compile:
-        env["XLA_FLAGS"] = " ".join([
-            env.get("XLA_FLAGS", ""),
+        xla_extra += [
             "--xla_gpu_autotune_level=0",
             "--xla_gpu_enable_triton_gemm=false",
-        ]).strip()
+        ]
+    if GPU_COUNT == 1:
+        xla_extra.append("--xla_gpu_enable_latency_hiding_scheduler=false")
+    if xla_extra:
+        env["XLA_FLAGS"] = " ".join([env.get("XLA_FLAGS", ""), *xla_extra]).strip()
 
     cmd = [
         "/root/.local/bin/uv", "run", "--exact", "train",

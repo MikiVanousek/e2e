@@ -13,7 +13,7 @@ training:
     optimizer_type: sgd
     lr: 1
     clip_gradient: 1.0
-  accum_steps: 4
+  accum_steps: 8
 
 
 model:
