@@ -5,8 +5,10 @@ defaults:
   - _self_
 
 training:
-  exp_name: pretrain-14m-e2e
+  exp_name: pretrain-14m-e2e-from-fa
   train_mode: meta
+  load_part: params
+  resume_exp_name: "14m-fa-match"
   spec_inner: ["language_model.**.suffix_blocks.feed_forward_prime.**"]
   ilr_init: 0.1
   optimizer_inner:

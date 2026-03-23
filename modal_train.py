@@ -133,12 +133,15 @@ GPU_COUNT = 1
     secrets=[modal.Secret.from_name("default")],
     volumes={"/data": dataset_volume, "/checkpoints": checkpoint_volume, "/jax_cache": cache_volume},
 )
-def train(experiment: str, run_name: str, wandb_entity: str = "miki-aisle", wandb_project: str = "e2e-ttt", fast_compile: bool = False):
+def train(experiment: str, run_name: str, wandb_entity: str = "miki-aisle", wandb_project: str = "e2e-ttt", fast_compile: bool = False, eval_only: bool = False, mem_profile: bool = False):
     dataset_volume.reload()
     cache_volume.reload()
 
     env = os.environ.copy()
-    env.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.95")
+    if mem_profile:
+        env["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+    else:
+        env.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.95")
     xla_extra = []
     if fast_compile:
         xla_extra += [
@@ -164,6 +167,8 @@ def train(experiment: str, run_name: str, wandb_entity: str = "miki-aisle", wand
         f"backend.num_devices={GPU_COUNT}",
         "backend.compilation_cache_dir=/jax_cache",
     ]
+    if eval_only:
+        cmd.append("training.eval_mode=True")
 
     subprocess.run(cmd, check=True, cwd="/app", env=env)
     cache_volume.commit()
@@ -186,9 +191,11 @@ def main(
     wandb_entity: str = "miki-aisle",
     wandb_project: str = "e2e-ttt",
     fast_compile: bool = False,
+    eval_only: bool = False,
+    mem_profile: bool = False,
 ):
     assert run_name, "--run-name is required"
-    train.remote(experiment=experiment, run_name=run_name, wandb_entity=wandb_entity, wandb_project=wandb_project, fast_compile=fast_compile)
+    train.remote(experiment=experiment, run_name=run_name, wandb_entity=wandb_entity, wandb_project=wandb_project, fast_compile=fast_compile, eval_only=eval_only, mem_profile=mem_profile)
 
 
 @app.local_entrypoint()

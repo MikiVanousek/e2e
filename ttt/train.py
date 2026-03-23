@@ -1,5 +1,6 @@
 import logging
 import os
+import tempfile
 from pathlib import Path
 from pprint import pformat
 
@@ -23,7 +24,7 @@ from ttt.model.sharding import ModelSharding
 from ttt.model.transformer import MetaModel
 from ttt.optimizers import make_optimizer
 from ttt.utils.jax_utils import eval_shape_and_sharding, get_custom_tqdm, initialize_distibuted, master_log, set_random_seed, tree_rearrange
-from ttt.utils.memory_utils import log_memory_breakdown
+from ttt.utils.memory_utils import log_memory_breakdown, log_memory_gauge
 
 register_configs()
 
@@ -101,7 +102,7 @@ def _main(cfg: Config) -> None:
     log_dir = Path(cfg.training.exp_dir) / cfg.training.exp_folder / cfg.training.exp_name
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    wandb_logger = WandbLogger(
+    with WandbLogger(
         entity=cfg.training.wandb_entity,
         project=cfg.training.wandb_project,
         run_name=cfg.training.run_name,
@@ -110,174 +111,190 @@ def _main(cfg: Config) -> None:
         logging_process=0,
         config=cfg_dict,
         enabled=cfg.training.log_wandb,
-    )
+    ) as wandb_logger:
+        dev_info = f"Process # {n_host}\tLocal dev # {local_dev_num}\tTotal dev # {global_dev_num}"
+        master_log(logger, dev_info)
 
-    dev_info = f"Process # {n_host}\tLocal dev # {local_dev_num}\tTotal dev # {global_dev_num}"
-    master_log(logger, dev_info)
+        checkpointer = Checkpointer(config=cfg, for_saving=True)
 
-    checkpointer = Checkpointer(config=cfg, for_saving=True)
+        optimizer_outer_loop, optimizer_info_outer_loop = make_optimizer(cfg.training.optimizer_outer)
 
-    optimizer_outer_loop, optimizer_info_outer_loop = make_optimizer(cfg.training.optimizer_outer)
+        model_sharding = ModelSharding(cfg)
+        mesh = model_sharding.mesh
+        data_sharding = jax.NamedSharding(mesh, P("data"))
+        cfg.model.seq_len = cfg.training.seq_length
 
-    model_sharding = ModelSharding(cfg)
-    mesh = model_sharding.mesh
-    data_sharding = jax.NamedSharding(mesh, P("data"))
-    cfg.model.seq_len = cfg.training.seq_length
+        train_ds_iter, to_sharded_batch = _make_train_iterator(cfg, model_cfg, data_sharding, n_data_parallel)
 
-    train_ds_iter, to_sharded_batch = _make_train_iterator(cfg, model_cfg, data_sharding, n_data_parallel)
+        @eqx.filter_jit
+        def create_sharded_model_and_state() -> tuple[MetaModel, eqx.nn.State]:
+            model, state = eqx.nn.make_with_state(MetaModel)(cfg, key=key)
+            state = jax.device_put(state, jax.NamedSharding(mesh, P()))  # Replicate initial (empty) state
+            model = model_sharding.shard_params(model)
+            return model, state
 
-    @eqx.filter_jit
-    def create_sharded_model_and_state() -> tuple[MetaModel, eqx.nn.State]:
-        model, state = eqx.nn.make_with_state(MetaModel)(cfg, key=key)
-        state = jax.device_put(state, jax.NamedSharding(mesh, P()))  # Replicate initial (empty) state
-        model = model_sharding.shard_params(model)
-        return model, state
+        @eqx.filter_jit
+        def create_stepped_opt_state(model: MetaModel) -> OptState:
+            """
+            Create optimizer state with correct sharding after having a single update step applied.
+            """
+            trainable_params = model.trainable_parameters()
+            opt_state = optimizer_outer_loop.init(trainable_params)
+            _, opt_state = optimizer_outer_loop.update(trainable_params, opt_state, model.trainable_parameters())
+            # Should be sharded the same way as the model parameters
+            return opt_state
 
-    @eqx.filter_jit
-    def create_stepped_opt_state(model: MetaModel) -> OptState:
-        """
-        Create optimizer state with correct sharding after having a single update step applied.
-        """
-        trainable_params = model.trainable_parameters()
-        opt_state = optimizer_outer_loop.init(trainable_params)
-        _, opt_state = optimizer_outer_loop.update(trainable_params, opt_state, model.trainable_parameters())
-        # Should be sharded the same way as the model parameters
-        return opt_state
+        if checkpointer.checkpoint_exists() or cfg.training.load_part != "none":
+            if checkpointer.checkpoint_exists():
+                load_part = "all"
+                load_checkpointer = checkpointer
+            else:
+                assert cfg.checkpoint.resume_checkpoint_dir is not None
+                load_part = cfg.training.load_part
+                load_checkpointer = Checkpointer(
+                    config=cfg, for_saving=False
+                )  # Use the resumption path only if the run is starting from scratch. Otherwise use the current checkpointing path.
 
-    if checkpointer.checkpoint_exists() or cfg.training.load_part != "none":
-        if checkpointer.checkpoint_exists():
-            load_part = "all"
-            load_checkpointer = checkpointer
-        else:
-            assert cfg.checkpoint.resume_checkpoint_dir is not None
-            load_part = cfg.training.load_part
-            load_checkpointer = Checkpointer(
-                config=cfg, for_saving=False
-            )  # Use the resumption path only if the run is starting from scratch. Otherwise use the current checkpointing path.
+            if load_part == "all" and cfg.training.eval_mode:  # prevent uncessary opt and loop state resumption
+                load_part = "params"
 
-        if load_part == "all" and cfg.training.eval_mode:  # prevent uncessary opt and loop state resumption
-            load_part = "params"
+            abstract_model_weights = eval_shape_and_sharding(lambda: create_sharded_model_and_state()[0].weights())
+            abstract_opt_state = eval_shape_and_sharding(lambda: create_stepped_opt_state(create_sharded_model_and_state()[0]))
 
-        abstract_model_weights = eval_shape_and_sharding(lambda: create_sharded_model_and_state()[0].weights())
-        abstract_opt_state = eval_shape_and_sharding(lambda: create_stepped_opt_state(create_sharded_model_and_state()[0]))
+            out_state = load_checkpointer.load_checkpoint(
+                step=cfg.training.resume_step,
+                targets={"model_weights": abstract_model_weights, "opt_state": abstract_opt_state, "train_ds_iter": train_ds_iter},
+                restore=load_part,
+            )
 
-        out_state = load_checkpointer.load_checkpoint(
-            step=cfg.training.resume_step,
-            targets={"model_weights": abstract_model_weights, "opt_state": abstract_opt_state, "train_ds_iter": train_ds_iter},
-            restore=load_part,
-        )
+            def load_model_weights(model: MetaModel, out_state) -> MetaModel:
+                model_loaded, not_found = unify_dict_with_eqx_module(out_state["model_weights"], model)
+                if not_found:
+                    master_log(logger, f"Parameters initialized from scratch (not in checkpoint): {not_found}")
+                return model_loaded
 
-        def load_model_weights(model: MetaModel, out_state) -> MetaModel:
-            model_loaded = unify_dict_with_eqx_module(out_state["model_weights"], model)[0]
-            return model_loaded
+            master_log(logger, "Restoring model weights")
+            model, state = create_sharded_model_and_state()
+            model = load_model_weights(model, out_state)
 
-        master_log(logger, "Restoring model weights")
-        model, state = create_sharded_model_and_state()
-        model = load_model_weights(model, out_state)
+            if "opt_state" not in out_state:  # Create new optimizer state
+                master_log(logger, "Restored model weights, creating new optimizer state")
+                opt_state = optimizer_outer_loop.init(model.trainable_parameters())
+                start_step = 0
 
-        if "opt_state" not in out_state:  # Create new optimizer state
-            master_log(logger, "Restored model weights, creating new optimizer state")
-            opt_state = optimizer_outer_loop.init(model.trainable_parameters())
+            else:  # Restore optimizer state
+
+                def create_opt_state_with_loaded_weights(model: MetaModel, out_state) -> OptState:
+                    opt_state = create_stepped_opt_state(model)
+                    opt_state = unify_dict_with_eqx_module(out_state["opt_state"], opt_state)[0]
+                    return opt_state
+
+                master_log(logger, "Restoring optimizer state")
+                opt_state = create_opt_state_with_loaded_weights(model, out_state)
+                start_step = int(jax.device_get(out_state["train_ds_iter"].get_state()["next_index"]))
+
+            del out_state, load_checkpointer
+
+        else:  # Create new model and optimizer state
+            model, state = create_sharded_model_and_state()
+            opt_state = optimizer_outer_loop.init(model.trainable_parameters())  # Sharding taken from model
             start_step = 0
 
-        else:  # Restore optimizer state
+        ### Include Storage
+        num_trainable_params = sum(x.size for x in jax.tree_util.tree_leaves(model.trainable_parameters()))
+        num_non_embedding_params = num_trainable_params - model.language_model.model.wte.weight.size
+        if model.language_model.lm_head is not None:
+            num_non_embedding_params -= model.language_model.lm_head.weight.size
+        logger.info(f"#Trainable params: {num_trainable_params}")
+        logger.info(f"#Non-embed params: {num_non_embedding_params}")
+        log_memory_breakdown(model, opt_state, step=-1, wandb_logger=wandb_logger)
 
-            def create_opt_state_with_loaded_weights(model: MetaModel, out_state) -> OptState:
-                opt_state = create_stepped_opt_state(model)
-                opt_state = unify_dict_with_eqx_module(out_state["opt_state"], opt_state)[0]
-                return opt_state
+        M = MetaModel.MetricType
+        evaluator = Evaluator(
+            global_batch_size=max(cfg.training.eval_batch_size, cfg.training.global_batch_size // cfg.training.accum_steps * 4),  # Larger bs to speed up eval
+            data_sharding=data_sharding,
+            config=cfg,
+            wandb_logger=wandb_logger,
+            log_dir=log_dir,
+        )
 
-            master_log(logger, "Restoring optimizer state")
-            opt_state = create_opt_state_with_loaded_weights(model, out_state)
-            start_step = int(jax.device_get(out_state["train_ds_iter"].get_state()["next_index"]))
+        total_steps = cfg.training.total_steps
+        assert total_steps >= 1, "Total step must >=1, otherwise, lower global batch size"
+        eval_steps = {round((total_steps - 1) * i / cfg.training.num_evals) for i in range(1, cfg.training.num_evals + 1)}
+        master_log(logger, f"Total steps: {total_steps}, eval at steps: {sorted(eval_steps)}")
 
-        del out_state, load_checkpointer
+        with mesh:
+            if cfg.training.eval_mode or start_step == total_steps:
+                state = state.set(model.step_index, jnp.array(jnp.iinfo(jnp.int32).max - 100, dtype=jnp.int32))
+                evaluator.eval_fn(model, state, start_step)
+                jax.experimental.multihost_utils.sync_global_devices("eval finished")
+                return
 
-    else:  # Create new model and optimizer state
-        model, state = create_sharded_model_and_state()
-        opt_state = optimizer_outer_loop.init(model.trainable_parameters())  # Sharding taken from model
-        start_step = 0
+            tqdm = get_custom_tqdm() if master_process else _tqdm
+            for step in tqdm(range(start_step, total_steps), initial=start_step, total=total_steps, desc="Outer Loop Training", disable=not master_process):
+                if 0 < cfg.training.break_step < step:
+                    jax.experimental.multihost_utils.sync_global_devices("reached break step")
+                    break
 
-    ### Include Storage
-    num_trainable_params = sum(x.size for x in jax.tree_util.tree_leaves(model.trainable_parameters()))
-    num_non_embedding_params = num_trainable_params - model.language_model.model.wte.weight.size
-    if model.language_model.lm_head is not None:
-        num_non_embedding_params -= model.language_model.lm_head.weight.size
-    logger.info(f"#Trainable params: {num_trainable_params}")
-    logger.info(f"#Non-embed params: {num_non_embedding_params}")
-    log_memory_breakdown(model, opt_state, step=-1, wandb_logger=wandb_logger)
+                batch = to_sharded_batch(next(train_ds_iter))
 
-    M = MetaModel.MetricType
-    evaluator = Evaluator(
-        global_batch_size=max(cfg.training.eval_batch_size, cfg.training.global_batch_size // cfg.training.accum_steps * 4),  # Larger bs to speed up eval
-        data_sharding=data_sharding,
-        config=cfg,
-        wandb_logger=wandb_logger,
-        log_dir=log_dir,
-    )
+                state = state.set(model.step_index, jnp.array(step, dtype=jnp.int32))
 
-    total_steps = cfg.training.total_steps
-    assert total_steps >= 1, "Total step must >=1, otherwise, lower global batch size"
-    master_log(logger, f"Total steps: {total_steps}")
+                profile_this_step = step == start_step + 1
+                trace_dir = tempfile.mkdtemp(prefix="jax_trace_") if profile_this_step else None
+                try:
+                    if profile_this_step:
+                        with jax.profiler.trace(trace_dir):
+                            model, opt_state, loss, metrics = train_on_sequence(state, model, opt_state, batch, cfg)
+                    else:
+                        model, opt_state, loss, metrics = train_on_sequence(state, model, opt_state, batch, cfg)
+                except Exception:
+                    if step == start_step:
+                        log_memory_breakdown(model, opt_state, step=step, wandb_logger=wandb_logger)
+                    raise
 
-    with mesh:
-        if cfg.training.eval_mode or start_step == total_steps:
-            state = state.set(model.step_index, jnp.array(jnp.iinfo(jnp.int32).max - 100, dtype=jnp.int32))
-            evaluator.eval_fn(model, state, start_step)
-            jax.experimental.multihost_utils.sync_global_devices("eval finished")
-            return
-
-        tqdm = get_custom_tqdm() if master_process else _tqdm
-        for step in tqdm(range(start_step, total_steps), initial=start_step, total=total_steps, desc="Outer Loop Training", disable=not master_process):
-            if 0 < cfg.training.break_step < step:
-                jax.experimental.multihost_utils.sync_global_devices("reached break step")
-                break
-
-            batch = to_sharded_batch(next(train_ds_iter))
-
-            state = state.set(model.step_index, jnp.array(step, dtype=jnp.int32))
-            try:
-                model, opt_state, loss, metrics = train_on_sequence(state, model, opt_state, batch, cfg)
-            except Exception:
                 if step == start_step:
                     log_memory_breakdown(model, opt_state, step=step, wandb_logger=wandb_logger)
-                raise
 
-            if step == start_step:
-                log_memory_breakdown(model, opt_state, step=step, wandb_logger=wandb_logger)
+                if trace_dir is not None:
+                    for f in Path(trace_dir).rglob("*"):
+                        if f.is_file():
+                            wandb_logger.save(str(f), base_path=trace_dir)
+                    master_log(logger, f"Uploaded JAX profiler trace from {trace_dir} to wandb")
 
-            loss_ce = metrics[M.loss].mean()
+                loss_ce = metrics[M.loss].mean()
 
-            update = {
-                "loss": jax.device_get(loss_ce).item(),
-                "gradient_norm": jax.device_get(metrics[M.outer_grad_norm]).item(),
-                "outer_learning_rate": jnp.asarray(optimizer_info_outer_loop["learning_rate_schedule"](int(opt_state[1][2].count) - 1)).item(),
-            }
+                update = {
+                    "loss": jax.device_get(loss_ce).item(),
+                    "gradient_norm": jax.device_get(metrics[M.outer_grad_norm]).item(),
+                    "outer_learning_rate": jnp.asarray(optimizer_info_outer_loop["learning_rate_schedule"](int(opt_state[1][2].count) - 1)).item(),
+                }
 
-            wandb_logger.log(update, step)
+                log_memory_gauge(step, wandb_logger)
+                wandb_logger.log(update, step)
 
-            if (cfg.training.save_milestone_freq > 0 and step % cfg.training.save_milestone_freq == 0 and step != 0) or (step == cfg.training.total_steps - 1):
-                master_log(logger, f"Saving checkpoint at step {step}, do not kill...")
-                is_milestone = (cfg.training.save_milestone_freq > 0) and (step % cfg.training.save_milestone_freq == 0)
+                if (cfg.training.save_milestone_freq > 0 and step % cfg.training.save_milestone_freq == 0 and step != 0) or (step == cfg.training.total_steps - 1):
+                    master_log(logger, f"Saving checkpoint at step {step}, do not kill...")
+                    is_milestone = (cfg.training.save_milestone_freq > 0) and (step % cfg.training.save_milestone_freq == 0)
 
-                checkpointer.save_checkpoint(
-                    step=step,
-                    model=model,
-                    opt_state=opt_state,
-                    train_ds_iter=train_ds_iter,
-                    is_milestone=is_milestone,
-                )
+                    checkpointer.save_checkpoint(
+                        step=step,
+                        model=model,
+                        opt_state=opt_state,
+                        train_ds_iter=train_ds_iter,
+                        is_milestone=is_milestone,
+                    )
 
-                # Make sure the previous checkpoint is finished since we'll donate the weights the next loop
-                checkpointer.wait_until_finished()
+                    # Make sure the previous checkpoint is finished since we'll donate the weights the next loop
+                    checkpointer.wait_until_finished()
 
-                if step == cfg.training.total_steps - 1:
-                    evaluator.eval_fn(model, state, step)
+                    if step in eval_steps:
+                        evaluator.eval_fn(model, state, step)
 
-        checkpointer.close()  # Always wait until checkpoints are done saving
+            checkpointer.close()  # Always wait until checkpoints are done saving
 
-        if cfg.backend.distributed:
-            jax.experimental.multihost_utils.sync_global_devices("end_of_training")
+            if cfg.backend.distributed:
+                jax.experimental.multihost_utils.sync_global_devices("end_of_training")
 
 
 @hydra.main(version_base=None, config_path=str(Path("configs").absolute().resolve()), config_name="config")

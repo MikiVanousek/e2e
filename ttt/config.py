@@ -169,6 +169,8 @@ class TrainingConfig:
     ilr_warmup_steps: int = 0
     ilr_init: float = 1.0
     eval_batch_size: int = 8
+    max_eval_batches: int = 150
+    num_evals: int = 1
 
 
 @dataclass(unsafe_hash=True, eq=True)

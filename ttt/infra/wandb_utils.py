@@ -66,6 +66,15 @@ class WandbLogger:
             )
             master_log(logger, f"Initialized new run: {self.run.name} (ID: {self.run.id}, group: {self.run_name})")
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.run is not None:
+            self.run.finish(exit_code=1 if exc_type is not None else 0)
+            self.run = None
+        return False
+
     def log(self, metrics: dict, step: int):
         """
         Log metrics at given step.

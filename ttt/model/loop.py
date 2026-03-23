@@ -91,39 +91,48 @@ class Evaluator:
 
     def eval_fn(self, model: MetaModel, state: eqx.nn.State, step: int):
         pid = jax.process_index()  # 0 -- (n_host - 1)
+        max_batches = self.config.training.max_eval_batches
 
         loader_dict = {"train_holdout": self.train_holdout_loader}
 
         def load_to_sharded_array(arr):
             return jax.make_array_from_process_local_data(sharding=self.data_sharding, local_data=arr, global_shape=(self.global_batch_size, *arr.shape[1:]))
 
-        def eval_loader(path, ds: grain.MapDataset):
+        eval_metrics = {}
+        eval_loss_ci = {}
+
+        for name, ds in loader_dict.items():
             batch_loader = ds.to_iter_dataset().map(lambda batch: jax.tree.map(load_to_sharded_array, batch))
-            loader_key = path[0].key
+            total = min(len(ds), max_batches) if max_batches > 0 else len(ds)
 
             results = []
-            for batch in tqdm(batch_loader, desc=f"Evaluating on sequence {loader_key}", total=len(ds), disable=pid != 0):
-                result = eval_step_fn(model, batch, state)
-                results.append(result)
+            for batch in tqdm(batch_loader, desc=f"Evaluating on sequence {name}", total=total, disable=pid != 0):
+                results.append(eval_step_fn(model, batch, state))
+                if max_batches > 0 and len(results) >= max_batches:
+                    break
 
-            results_mean = jax.tree.map(lambda *x: np.asarray(jnp.mean(jnp.stack(x), axis=0, dtype=jnp.float32)), *results)
+            eval_metrics[name] = jax.tree.map(lambda *x: np.asarray(jnp.mean(jnp.stack(x), axis=0, dtype=jnp.float32)), *results)
 
-            return results_mean
+            loss_per_batch = np.array([np.asarray(r[M.loss]).mean() for r in results])
+            n = len(loss_per_batch)
+            eval_loss_ci[name] = 1.96 * loss_per_batch.std(ddof=1) / np.sqrt(n) if n > 1 else 0.0
 
-        eval_metrics = jax.tree.map_with_path(eval_loader, loader_dict)
+        self.log_eval_results(eval_metrics, eval_loss_ci, step)
 
-        self.log_eval_results(eval_metrics, step)
-
-    def log_eval_results(self, eval_metrics, step):
+    def log_eval_results(self, eval_metrics, eval_loss_ci, step):
         for eval_name, v in eval_metrics.items():
+            ci = eval_loss_ci.get(eval_name, 0.0)
             for metric_name, metric in v.items():
                 if metric_name == M.loss:
-                    # Just log loss to wandb
-                    master_log(logger, f"Eval -- {eval_name}/{metric_name}: {metric.mean()}")
-                    self.wandb_logger.log({f"{eval_name}/{metric_name}": metric}, step)
+                    mean_loss = float(metric.mean())
+                    master_log(logger, f"Eval -- {eval_name}/{metric_name}: {mean_loss:.4f} ± {ci:.4f}")
+                    self.wandb_logger.log({
+                        f"{eval_name}/{metric_name}": mean_loss,
+                        f"{eval_name}/{metric_name}_ci_lower": mean_loss - ci,
+                        f"{eval_name}/{metric_name}_ci_upper": mean_loss + ci,
+                    }, step)
 
                 else:
-                    # Log to wandb and cache for other metrics
                     save_dir = self.log_dir / f"{eval_name}_{metric_name}.npy"
                     if metric_name == M.token_nll_loss:
                         self.wandb_logger.log_token_nll_loss(metric, step, eval_name)

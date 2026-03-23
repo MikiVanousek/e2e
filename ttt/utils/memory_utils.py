@@ -45,8 +45,28 @@ def log_memory_breakdown(model, opt_state, step, wandb_logger):
         "memory/optimizer_state_gb": gb(opt_bytes),
         "memory/other_gb": gb(other),
         "memory/activation_peak_gb": gb(activation_peak),
-        "memory/total_in_use_gb": gb(total_in_use),
-        "memory/peak_gb": gb(peak),
-        "memory/device_limit_gb": gb(limit),
+        **_device_memory_metrics(stats),
     }
     wandb_logger.log(metrics, step)
+
+
+def _device_memory_metrics(stats: dict) -> dict:
+    def gb(b):
+        return b / 1e9
+
+    return {
+        "memory/total_in_use_gb": gb(stats["bytes_in_use"]),
+        "memory/peak_gb": gb(stats["peak_bytes_in_use"]),
+        "memory/device_limit_gb": gb(stats["bytes_limit"]),
+        "memory/utilization_pct": stats["bytes_in_use"] / stats["bytes_limit"] * 100,
+    }
+
+
+def log_memory_gauge(step: int, wandb_logger):
+    if jax.process_index() != 0:
+        return
+    device = jax.local_devices()[0]
+    stats = device.memory_stats()
+    if stats is None:
+        return
+    wandb_logger.log(_device_memory_metrics(stats), step)

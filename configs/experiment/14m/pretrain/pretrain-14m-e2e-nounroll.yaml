@@ -14,14 +14,14 @@ training:
     lr: 1
     clip_gradient: 1.0
   accum_steps: 2
-  num_evals: 7
+  global_batch_size: 8
 
 model:
   seq_modeling_block: SWA
   force_flash: False
-  unroll_block_scan: True
-  mini_batch_size: 1024
-  sliding_window_size: 8192
+  unroll_block_scan: False
+  mini_batch_size: 128
+  sliding_window_size: 512
   rope_theta: 500000
   prime: True
   suffix_len: 3

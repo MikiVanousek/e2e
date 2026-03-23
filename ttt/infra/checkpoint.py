@@ -240,7 +240,11 @@ def fetch_from_eqx_module[M: eqx.Module](d: dict, module: M) -> tuple[M, list[st
         dict_path = tuple(pytree.GetAttrKey(p.key) if isinstance(p, pytree.DictKey) else p for p in path)
         if dict_path in eqx_map:
             new_value = eqx_map[dict_path]
-            assert new_value.shape == value.shape, f"Shape mismatch for {jax.tree_util.keystr(path)}: {new_value.shape} != {value.shape}"
+            assert new_value.shape == value.shape, (
+                f"Shape mismatch for {jax.tree_util.keystr(path)}: "
+                f"model has {new_value.shape}, checkpoint has {value.shape}. "
+                f"Ensure intermediate_size matches between checkpoint and model config."
+            )
             return new_value
         else:
             not_found_paths.append(jax.tree_util.keystr(path))
