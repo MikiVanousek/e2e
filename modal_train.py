@@ -63,6 +63,7 @@ def train(
     experiment: str,
     wandb_entity: str = "miki-aisle",
     wandb_project: str = "e2e-ttt",
+    wandb_name: str = "",
     fast_compile: bool = False,
 ):
     hf_cache_volume.reload()
@@ -90,6 +91,8 @@ def train(
         "backend.compilation_cache_dir=/jax_cache",
         "dataset.hf_cache_dir=/data",
     ]
+    if wandb_name:
+        cmd.append(f"training.wandb_display_name={wandb_name}")
 
     subprocess.run(cmd, check=True, cwd="/app", env=env)
     jax_cache_volume.commit()
@@ -101,6 +104,7 @@ def main(
     experiment: str = "125m/pretrain/simple",
     wandb_entity: str = "miki-aisle",
     wandb_project: str = "e2e-ttt",
+    wandb_name: str = "",
     fast_compile: bool = False,
 ):
     """Download dataset (CPU) then train (GPU)."""
@@ -109,5 +113,6 @@ def main(
         experiment=experiment,
         wandb_entity=wandb_entity,
         wandb_project=wandb_project,
+        wandb_name=wandb_name,
         fast_compile=fast_compile,
     )
