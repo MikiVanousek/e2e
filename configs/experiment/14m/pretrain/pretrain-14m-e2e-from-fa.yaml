@@ -15,7 +15,7 @@ training:
     optimizer_type: sgd
     lr: 1
     clip_gradient: 1.0
-  accum_steps: 2
+  accum_steps: 1
   num_evals: 7
 
 model:
@@ -26,5 +26,5 @@ model:
   sliding_window_size: 8192
   rope_theta: 500000
   prime: True
-  suffix_len: 3
+  suffix_len: 1
   intermediate_size: 832

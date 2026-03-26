@@ -59,6 +59,7 @@ class Evaluator:
         config: Config,
         wandb_logger: WandbLogger,
         log_dir: Path,
+        chunks_dir: str | None = None,
     ):
         self.train_holdout_loader = (
             lm_dataset(
@@ -73,6 +74,7 @@ class Evaluator:
                 eos_token_id=config.model.eos_token_id,
                 vocab_size=config.model.vocab_size,
                 tokenizer_name=config.training.tokenizer_name,
+                chunks_dir=chunks_dir,
             )
             if not config.training.dummy_dataset
             else dummy_dataset(
@@ -102,7 +104,9 @@ class Evaluator:
         eval_loss_ci = {}
 
         for name, ds in loader_dict.items():
-            batch_loader = ds.to_iter_dataset().map(lambda batch: jax.tree.map(load_to_sharded_array, batch))
+            batch_loader = ds.to_iter_dataset(
+                grain.ReadOptions(num_threads=self.config.training.loader_workers, prefetch_buffer_size=500),
+            ).map(lambda batch: jax.tree.map(load_to_sharded_array, batch))
             total = min(len(ds), max_batches) if max_batches > 0 else len(ds)
 
             results = []

@@ -2,6 +2,7 @@
 import os
 import subprocess
 import textwrap
+import threading
 from pathlib import Path
 
 import modal
@@ -10,107 +11,13 @@ import modal
 def _run_uv(args: list[str]) -> None:
     subprocess.run(["/root/.local/bin/uv", *args], check=True, cwd="/app")
 
-
-def _debug_probe_script() -> str:
-    return textwrap.dedent(
-        """
-        import importlib.metadata as metadata
-        import os
-        import platform
-        import shutil
-        import subprocess
-        import sys
-
-        import jax
-        import jax.numpy as jnp
-        import jaxlib
-
-        packages = [
-            "jax",
-            "jaxlib",
-            "jax-cuda12-plugin",
-            "jax-cuda12-pjrt",
-            "nvidia-cublas-cu12",
-            "nvidia-cuda-cupti-cu12",
-            "nvidia-cuda-nvcc-cu12",
-            "nvidia-cuda-runtime-cu12",
-            "nvidia-cudnn-cu12",
-            "nvidia-nccl-cu12",
-        ]
-
-        print("== Platform ==")
-        print(f"python={sys.version}")
-        print(f"platform={platform.platform()}")
-        print()
-
-        print("== Package versions ==")
-        for package in packages:
-            try:
-                dist = metadata.distribution(package)
-                print(f"{package}={dist.version} @ {dist.locate_file('')}")
-            except metadata.PackageNotFoundError:
-                print(f"{package}=<not installed>")
-        print()
-
-        print("== Environment ==")
-        for key in ["CUDA_VISIBLE_DEVICES", "JAX_PLATFORM_NAME", "XLA_FLAGS", "LD_LIBRARY_PATH", "PATH"]:
-            print(f"{key}={os.environ.get(key, '')}")
-        print()
-
-        print("== Driver / tools ==")
-        for cmd in (["nvidia-smi"], ["nvcc", "--version"]):
-            tool = shutil.which(cmd[0])
-            if tool is None:
-                print(f"{cmd[0]}=<not on PATH>")
-                continue
-            print(f"$ {' '.join(cmd)}")
-            try:
-                print(subprocess.check_output(cmd, text=True))
-            except subprocess.CalledProcessError as exc:
-                print(exc.output)
-                raise
-        print()
-
-        print("== JAX runtime ==")
-        print(f"jax={jax.__version__}")
-        print(f"jaxlib={jaxlib.__version__}")
-        print(f"default_backend={jax.default_backend()}")
-        print(f"devices={jax.devices()}")
-        print()
-
-        print("== cuDNN attention probe ==")
-        batch = 1
-        seq_len = 128
-        num_heads = 12
-        head_dim = 64
-        q = jnp.ones((batch, seq_len, num_heads, head_dim), dtype=jnp.bfloat16)
-        k = jnp.ones((batch, seq_len, num_heads, head_dim), dtype=jnp.bfloat16)
-        v = jnp.ones((batch, seq_len, num_heads, head_dim), dtype=jnp.bfloat16)
-
-        @jax.jit
-        def run_attention(q, k, v):
-            return jax.nn.dot_product_attention(
-                q,
-                k,
-                v,
-                is_causal=True,
-                implementation="cudnn",
-            )
-
-        out = run_attention(q, k, v)
-        out.block_until_ready()
-        print(f"attention_output_shape={out.shape}")
-        print(f"attention_output_dtype={out.dtype}")
-        print("cudnn_attention=ok")
-        """
-    ).strip()
-
 E2E_DIR = Path(__file__).resolve().parent
 
 app = modal.App("e2e-ttt-train")
 dataset_volume = modal.Volume.from_name("llama3-dataset-vol")
 checkpoint_volume = modal.Volume.from_name("e2e-checkpoints", create_if_missing=True)
 cache_volume = modal.Volume.from_name("e2e-jax-cache", create_if_missing=True)
+chunks_volume = modal.Volume.from_name("e2e-chunks", create_if_missing=True)
 
 image = (
     modal.Image.from_registry("nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04", add_python="3.12")
@@ -125,17 +32,86 @@ image = (
 )
 
 
-GPU_COUNT = 1
+def _preprocess_base_cmd(experiment: str) -> list[str]:
+    return [
+        "/root/.local/bin/uv", "run", "--exact", "preprocess",
+        "+deploy=interactive",
+        f"+experiment={experiment}",
+        "deploy_paths.data.dclm_filter_8k=/data/data.zarr",
+        "deploy_paths.data.books3=/data/books3",
+        "training.chunks_dir=/chunks",
+    ]
+
+
+def _preprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["JAX_PLATFORMS"] = "cpu"
+    return env
+
+
 @app.function(
     image=image,
-    gpu=f"B200:{GPU_COUNT}",
-    timeout=6 * 3600,
+    timeout=12 * 3600,
     secrets=[modal.Secret.from_name("default")],
-    volumes={"/data": dataset_volume, "/checkpoints": checkpoint_volume, "/jax_cache": cache_volume},
+    volumes={"/data": dataset_volume, "/chunks": chunks_volume},
+    cpu=4,
+    memory=32768,
+)
+def preprocess_single_chunk(experiment: str, chunk_idx: int):
+    dataset_volume.reload()
+    chunks_volume.reload()
+
+    cmd = [*_preprocess_base_cmd(experiment), f"training.preprocess_chunk_idx={chunk_idx}"]
+    result = subprocess.run(cmd, cwd="/app", env=_preprocess_env())
+    if result.returncode != 0:
+        raise RuntimeError(f"Preprocessing chunk {chunk_idx} failed with exit code {result.returncode}")
+    chunks_volume.commit()
+    print(f"Committed chunk {chunk_idx}")
+
+
+@app.function(
+    image=image,
+    timeout=12 * 3600,
+    secrets=[modal.Secret.from_name("default")],
+    volumes={"/data": dataset_volume, "/chunks": chunks_volume},
+    cpu=4,
+    memory=32768,
+)
+def preprocess_data(experiment: str):
+    dataset_volume.reload()
+
+    cmd = [*_preprocess_base_cmd(experiment), "training.preprocess_chunk_idx=-2"]
+    result = subprocess.run(cmd, cwd="/app", env=_preprocess_env(), capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"Count chunks failed: {result.stderr}")
+    for line in result.stdout.splitlines():
+        if line.startswith("CHUNK_COUNT="):
+            num_chunks = int(line.split("=", 1)[1])
+            break
+    else:
+        raise RuntimeError(f"Could not parse chunk count from output:\n{result.stdout}")
+
+    print(f"Dispatching {num_chunks} chunk(s) in parallel")
+    for _ in preprocess_single_chunk.starmap([(experiment, i) for i in range(num_chunks)]):
+        pass
+    print(f"All {num_chunks} chunks done")
+
+
+GPU_COUNT = 1
+
+
+@app.function(
+    image=image,
+    gpu=f"H200:{GPU_COUNT}",
+    timeout=12 * 3600,
+    secrets=[modal.Secret.from_name("default")],
+    volumes={"/data": dataset_volume, "/checkpoints": checkpoint_volume, "/jax_cache": cache_volume, "/chunks": chunks_volume},
 )
 def train(experiment: str, run_name: str, wandb_entity: str = "miki-aisle", wandb_project: str = "e2e-ttt", fast_compile: bool = False, eval_only: bool = False, mem_profile: bool = False):
     dataset_volume.reload()
     cache_volume.reload()
+    checkpoint_volume.reload()
+    chunks_volume.reload()
 
     env = os.environ.copy()
     if mem_profile:
@@ -166,13 +142,26 @@ def train(experiment: str, run_name: str, wandb_entity: str = "miki-aisle", wand
         f"training.wandb_key={os.environ['WANDB_API_KEY']}",
         f"backend.num_devices={GPU_COUNT}",
         "backend.compilation_cache_dir=/jax_cache",
+        "training.chunks_dir=/chunks",
     ]
     if eval_only:
         cmd.append("training.eval_mode=True")
 
-    subprocess.run(cmd, check=True, cwd="/app", env=env)
+    stop_commit = threading.Event()
+
+    def _periodic_commit():
+        while not stop_commit.wait(timeout=120):
+            checkpoint_volume.commit()
+
+    commit_thread = threading.Thread(target=_periodic_commit, daemon=True)
+    commit_thread.start()
+    try:
+        subprocess.run(cmd, check=True, cwd="/app", env=env)
+    finally:
+        stop_commit.set()
+        commit_thread.join()
+        checkpoint_volume.commit()
     cache_volume.commit()
-    checkpoint_volume.commit()
 
 
 @app.function(
@@ -194,10 +183,16 @@ def main(
     eval_only: bool = False,
     mem_profile: bool = False,
 ):
+    """Preprocess data if needed (CPU, no GPU), then launch GPU training."""
     assert run_name, "--run-name is required"
-    train.remote(experiment=experiment, run_name=run_name, wandb_entity=wandb_entity, wandb_project=wandb_project, fast_compile=fast_compile, eval_only=eval_only, mem_profile=mem_profile)
+    preprocess_data.remote(experiment=experiment)
+    train.remote(
+        experiment=experiment, run_name=run_name, wandb_entity=wandb_entity,
+        wandb_project=wandb_project, fast_compile=fast_compile, eval_only=eval_only,
+        mem_profile=mem_profile,
+    )
 
 
-@app.local_entrypoint()
-def debug():
-    debug_versions.remote()
+# @app.local_entrypoint()
+# def debug():
+#     debug_versions.remote()

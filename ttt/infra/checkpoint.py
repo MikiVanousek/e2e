@@ -31,10 +31,11 @@ class CustomPyGrainCheckpointHandler(grain.PyGrainCheckpointHandler):
     ):
         """Saves the given iterator to the checkpoint in `directory`."""
         item = args.item
-        if isinstance(item, dataset.DatasetIterator):
-            state = json.dumps(item.get_state(), indent=4)
+        raw_state = item.get_state()
+        if isinstance(raw_state, dict):
+            state = json.dumps(raw_state, indent=4)
         else:
-            state = item.get_state().decode()
+            state = raw_state.decode()
         filename = directory / "global_batch_progress.json"
 
         if jax.process_index() == 0:
@@ -51,7 +52,8 @@ class CustomPyGrainCheckpointHandler(grain.PyGrainCheckpointHandler):
         if not filename.exists():
             raise ValueError(f"File {filename} does not exist.")
         state = filename.read_text()
-        if isinstance(item, dataset.DatasetIterator):
+        raw_state = item.get_state()
+        if isinstance(raw_state, dict):
             state = json.loads(state)
         else:
             state = state.encode()

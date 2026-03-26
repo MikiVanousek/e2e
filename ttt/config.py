@@ -171,6 +171,8 @@ class TrainingConfig:
     eval_batch_size: int = 8
     max_eval_batches: int = 150
     num_evals: int = 1
+    chunks_dir: str = ""
+    preprocess_chunk_idx: int = -1
 
 
 @dataclass(unsafe_hash=True, eq=True)
