@@ -119,6 +119,14 @@ class ModelConfig:
 
 
 @dataclass(unsafe_hash=True, eq=True)
+class DatasetConfig:
+    hf_dataset: str = "HuggingFaceFW/fineweb-edu"
+    hf_subset: str = "sample-10BT"
+    hf_text_column: str = "text"
+    hf_cache_dir: str = ""
+
+
+@dataclass(unsafe_hash=True, eq=True)
 class TrainingConfig:
     class LoadPart(StrEnum):
         all = "all"
@@ -139,9 +147,8 @@ class TrainingConfig:
     total_steps: int = 2500
     break_step: int = -1
     save_milestone_freq: int = 2500
-    dataset_path: str = MISSING
-    dataset_name: str = MISSING
     tokenizer_name: str = "meta-llama/Llama-2-7b-hf"
+    dataset_name: str = ""
     seq_length: int = 1024
     global_batch_size: int = 8
     accum_steps: int = 1
@@ -152,12 +159,13 @@ class TrainingConfig:
     exp_folder: str = "demo"
     exp_name: str = MISSING
     run_name: str = MISSING
+    wandb_display_name: str = ""
     resume_exp_name: str = ""
     resume_step: int | None = None
     eval_mode: bool = False
     train_mode: TrainMode = "pretrain"
-    data_split: str = "train"
-    eval_split: str = "val"
+    data_split: str = "train[5%:]"
+    eval_split: str = "train[:5%]"
     inner_remat_freq: int = 1
     optimizer_outer: OptimizerConfig = field(default_factory=AdamWOptimizerConfig)
     optimizer_inner: OptimizerConfig | None = field(default_factory=SGDOptimizerConfig)
@@ -171,24 +179,20 @@ class TrainingConfig:
     eval_batch_size: int = 8
     max_eval_batches: int = 150
     num_evals: int = 1
+    skip_tokens: int = 0
     chunks_dir: str = ""
     preprocess_chunk_idx: int = -1
 
 
 @dataclass(unsafe_hash=True, eq=True)
 class DeployPathsConfig:
-    @dataclass(unsafe_hash=True, eq=True)
-    class Data:
-        books3: str = MISSING
-        the_pile: str = MISSING
-
-    data: Data = field(default_factory=Data)
     checkpoint: str = MISSING
 
 
 @dataclass(unsafe_hash=True, eq=True)
 class Config:
     training: TrainingConfig = field(default_factory=TrainingConfig)
+    dataset: DatasetConfig = field(default_factory=DatasetConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     backend: JaxDistributedConfig = field(default_factory=JaxDistributedConfig)
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
@@ -198,6 +202,7 @@ class Config:
 def register_configs():
     cs = ConfigStore.instance()
     cs.store(group="training", name="base_training", node=TrainingConfig)
+    cs.store(group="dataset", name="base_dataset", node=DatasetConfig)
     cs.store(group="model", name="base_model", node=ModelConfig)
     cs.store(group="backend", name="base_backend", node=JaxDistributedConfig)
     cs.store(group="checkpoint", name="base_checkpoint", node=CheckpointConfig)
