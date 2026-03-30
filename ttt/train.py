@@ -75,6 +75,11 @@ def _make_train_iterator(cfg: Config, model_cfg, data_sharding: jax.sharding.Sha
         batch = jax.tree.map(lambda x: load_to_sharded_array(x), batch)
         return tree_rearrange(batch, "(data_parallel batch) ... -> data_parallel batch ...", data_parallel=n_data_parallel)
 
+    skip_steps = cfg.training.skip_tokens // (cfg.training.seq_length * cfg.training.global_batch_size)
+    if skip_steps > 0:
+        train_ds = train_ds[skip_steps:]
+        master_log(logger, f"Skipping {skip_steps} steps ({cfg.training.skip_tokens:,} tokens)")
+
     train_iter_ds = train_ds.to_iter_dataset(
         grain.ReadOptions(num_threads=cfg.training.loader_workers, prefetch_buffer_size=500),
     )
@@ -238,12 +243,6 @@ def _main(cfg: Config) -> None:
             return
 
         tqdm = get_custom_tqdm() if master_process else _tqdm
-
-        skip_steps = cfg.training.skip_tokens // (cfg.training.seq_length * cfg.training.global_batch_size)
-        if skip_steps > 0:
-            master_log(logger, f"Skipping {skip_steps} steps ({cfg.training.skip_tokens:,} tokens)")
-            for _ in tqdm(range(skip_steps), desc="Skipping already-seen data", disable=not master_process):
-                next(train_ds_iter)
         for step in tqdm(range(start_step, total_steps), initial=start_step, total=total_steps, desc="Outer Loop Training", disable=not master_process):
             if 0 < cfg.training.break_step < step:
                 jax.experimental.multihost_utils.sync_global_devices("reached break step")
