@@ -31,7 +31,7 @@ image = (
     timeout=6 * 3600,
     secrets=[modal.Secret.from_name("default")],
     volumes={"/data": hf_cache_volume},
-    cpu=4,
+    cpu=16,
     memory=32768,
 )
 def download_dataset(hf_dataset: str = "HuggingFaceFW/fineweb-edu", hf_subset: str = "sample-10BT", split: str = "train"):
@@ -54,7 +54,7 @@ print(f"Downloaded {{len(ds)}} rows")
 
 @app.function(
     image=image,
-    gpu="H100",
+    gpu="H200",
     timeout=6 * 3600,
     secrets=[modal.Secret.from_name("default")],
     volumes={"/data": hf_cache_volume, "/checkpoints": checkpoint_volume, "/jax_cache": jax_cache_volume},
@@ -97,6 +97,27 @@ def train(
     subprocess.run(cmd, check=True, cwd="/app", env=env)
     jax_cache_volume.commit()
     checkpoint_volume.commit()
+
+
+@app.function(
+    image=image,
+    timeout=6 * 3600,
+    secrets=[modal.Secret.from_name("default")],
+    volumes={"/data": hf_cache_volume},
+    cpu=16,
+    memory=32768,
+)
+def preprocess_dataset(experiment: str):
+    """Download, tokenize, and filter dataset (CPU only, no GPU)."""
+    hf_cache_volume.reload()
+    cmd = [
+        "/root/.local/bin/uv", "run", "--exact", "preprocess",
+        "+deploy=interactive",
+        f"+experiment={experiment}",
+        "dataset.hf_cache_dir=/data",
+    ]
+    subprocess.run(cmd, check=True, cwd="/app", env=os.environ.copy())
+    hf_cache_volume.commit()
 
 
 @app.local_entrypoint()

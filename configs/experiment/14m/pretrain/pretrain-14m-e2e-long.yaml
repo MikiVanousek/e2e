@@ -14,9 +14,16 @@ training:
     optimizer_type: sgd
     lr: 1
     clip_gradient: 1.0
-  accum_steps: 1
-  eval_batch_size: 256
-  num_evals: 7
+
+  total_steps: 1500
+  global_batch_size: 64
+  save_milestone_freq: 100
+  eval_batch_size: 128
+  num_evals: 15
+  ilr_warmup_steps: 150
+  optimizer_outer:
+    lr_decay_steps: 1500
+    lr_warmup_steps: 150
 
 model:
   seq_modeling_block: SWA

@@ -1,8 +1,6 @@
 defaults:
   - /training/base_training@_global_.training
 
-dataset_name: books3
-
 total_steps: 120
 ilr_warmup_steps: 0
 

@@ -7,10 +7,12 @@ defaults:
 
 training:
   exp_name: pretrain-14m-fa
+  run_name: pretrain-14m-fa
   train_mode: pretrain
   total_steps: 1500
-  global_batch_size: 128
+  global_batch_size: 64
   save_milestone_freq: 100
+  eval_batch_size: 128
   num_evals: 15
   ilr_warmup_steps: 150
   optimizer_outer:

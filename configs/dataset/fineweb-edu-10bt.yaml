@@ -1,0 +1,6 @@
+defaults:
+  - /dataset/base_dataset@_here_
+
+hf_dataset: HuggingFaceFW/fineweb-edu
+hf_subset: sample-10BT
+hf_text_column: text

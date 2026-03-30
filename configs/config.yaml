@@ -2,12 +2,10 @@ defaults:
   - backend: gpu
   - model: base_model
   - training: base_training
+  - dataset: fineweb-edu-10bt
   - checkpoint: base_checkpoint
   - _self_
 
-training:
-  dataset_path: ${deploy_paths.data[${training.dataset_name}]}
-  
 checkpoint:
   checkpoint_dir: ${deploy_paths.checkpoint}/${training.exp_folder}/${training.run_name}
   resume_checkpoint_dir: ${deploy_paths.checkpoint}/${training.exp_folder}/${training.resume_exp_name}

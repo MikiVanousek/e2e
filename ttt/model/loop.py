@@ -59,11 +59,12 @@ class Evaluator:
         config: Config,
         wandb_logger: WandbLogger,
         log_dir: Path,
-        chunks_dir: str | None = None,
     ):
         self.train_holdout_loader = (
             lm_dataset(
-                path=config.training.dataset_path,
+                hf_dataset=config.dataset.hf_dataset,
+                hf_subset=config.dataset.hf_subset,
+                hf_text_column=config.dataset.hf_text_column,
                 seq_len=config.training.seq_length,
                 split=config.training.eval_split,
                 global_batch_size=global_batch_size,
@@ -72,9 +73,9 @@ class Evaluator:
                 shuffle=False,
                 bos_token_id=config.model.bos_token_id,
                 eos_token_id=config.model.eos_token_id,
-                vocab_size=config.model.vocab_size,
                 tokenizer_name=config.training.tokenizer_name,
-                chunks_dir=chunks_dir,
+                vocab_size=config.model.vocab_size,
+                cache_dir=config.dataset.hf_cache_dir,
             )
             if not config.training.dummy_dataset
             else dummy_dataset(
@@ -91,52 +92,43 @@ class Evaluator:
         self.wandb_logger = wandb_logger
         self.log_dir = log_dir
 
-    def eval_fn(self, model: MetaModel, state: eqx.nn.State, step: int):
+    def eval_fn(self, model: MetaModel, state: eqx.nn.State, step: int, max_batches: int | None = None):
         pid = jax.process_index()  # 0 -- (n_host - 1)
-        max_batches = self.config.training.max_eval_batches
 
         loader_dict = {"train_holdout": self.train_holdout_loader}
 
         def load_to_sharded_array(arr):
             return jax.make_array_from_process_local_data(sharding=self.data_sharding, local_data=arr, global_shape=(self.global_batch_size, *arr.shape[1:]))
 
-        eval_metrics = {}
-        eval_loss_ci = {}
-
-        for name, ds in loader_dict.items():
-            batch_loader = ds.to_iter_dataset(
-                grain.ReadOptions(num_threads=self.config.training.loader_workers, prefetch_buffer_size=500),
-            ).map(lambda batch: jax.tree.map(load_to_sharded_array, batch))
-            total = min(len(ds), max_batches) if max_batches > 0 else len(ds)
+        def eval_loader(path, ds: grain.MapDataset):
+            n_batches = min(max_batches, len(ds)) if max_batches is not None else len(ds)
+            batch_loader = ds.to_iter_dataset().map(lambda batch: jax.tree.map(load_to_sharded_array, batch))
+            loader_key = path[0].key
 
             results = []
-            for batch in tqdm(batch_loader, desc=f"Evaluating on sequence {name}", total=total, disable=pid != 0):
-                results.append(eval_step_fn(model, batch, state))
-                if max_batches > 0 and len(results) >= max_batches:
+            for i, batch in enumerate(tqdm(batch_loader, desc=f"Evaluating on sequence {loader_key}", total=n_batches, disable=pid != 0)):
+                if i >= n_batches:
                     break
+                result = eval_step_fn(model, batch, state)
+                results.append(result)
 
-            eval_metrics[name] = jax.tree.map(lambda *x: np.asarray(jnp.mean(jnp.stack(x), axis=0, dtype=jnp.float32)), *results)
+            results_mean = jax.tree.map(lambda *x: np.asarray(jnp.mean(jnp.stack(x), axis=0, dtype=jnp.float32)), *results)
 
-            loss_per_batch = np.array([np.asarray(r[M.loss]).mean() for r in results])
-            n = len(loss_per_batch)
-            eval_loss_ci[name] = 1.96 * loss_per_batch.std(ddof=1) / np.sqrt(n) if n > 1 else 0.0
+            return results_mean
 
-        self.log_eval_results(eval_metrics, eval_loss_ci, step)
+        eval_metrics = jax.tree.map_with_path(eval_loader, loader_dict)
 
-    def log_eval_results(self, eval_metrics, eval_loss_ci, step):
+        self.log_eval_results(eval_metrics, step)
+
+    def log_eval_results(self, eval_metrics, step):
         for eval_name, v in eval_metrics.items():
-            ci = eval_loss_ci.get(eval_name, 0.0)
             for metric_name, metric in v.items():
                 if metric_name == M.loss:
-                    mean_loss = float(metric.mean())
-                    master_log(logger, f"Eval -- {eval_name}/{metric_name}: {mean_loss:.4f} ± {ci:.4f}")
-                    self.wandb_logger.log({
-                        f"{eval_name}/{metric_name}": mean_loss,
-                        f"{eval_name}/{metric_name}_ci_lower": mean_loss - ci,
-                        f"{eval_name}/{metric_name}_ci_upper": mean_loss + ci,
-                    }, step)
+                    master_log(logger, f"Eval -- {eval_name}/{metric_name}: {metric.mean()}")
+                    self.wandb_logger.log({f"{eval_name}/{metric_name}": metric.mean()}, step)
 
                 else:
+                    # Log to wandb and cache for other metrics
                     save_dir = self.log_dir / f"{eval_name}_{metric_name}.npy"
                     if metric_name == M.token_nll_loss:
                         self.wandb_logger.log_token_nll_loss(metric, step, eval_name)

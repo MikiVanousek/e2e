@@ -32,6 +32,7 @@ class WandbLogger:
         logging_process: int,
         config: dict = None,
         enabled: bool = True,
+        display_name: str | None = None,
     ):
         import wandb
         from wandb.sdk.wandb_settings import Settings
@@ -53,8 +54,9 @@ class WandbLogger:
 
         if self.is_master and self.enabled:
             os.environ["WANDB_API_KEY"] = wandb_key
-            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
-            display_name = f"{self.run_name}-{timestamp}"
+            if display_name is None:
+                timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+                display_name = f"{self.run_name}-{timestamp}"
             config["overrides"] = list(HydraConfig.get().overrides.task) + list(HydraConfig.get().overrides.hydra)
             self.run = wandb.init(
                 project=self.project,

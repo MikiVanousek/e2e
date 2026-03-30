@@ -15,6 +15,7 @@ class HFTokenizedDataset(grain.RandomAccessDataSource):
 
     def __init__(self, *, hf_dataset: str, hf_subset: str | None, hf_text_column: str,
                  split: str, seq_len: int, tokenizer_name: str,
+                 vocab_size: int | None = None,
                  cache_dir: str | None = None, num_proc: int = 4):
         from datasets import load_dataset
         from transformers import AutoTokenizer
@@ -22,15 +23,22 @@ class HFTokenizedDataset(grain.RandomAccessDataSource):
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         min_len = seq_len + 1
 
+        if vocab_size is not None and vocab_size < tokenizer.vocab_size:
+            from ttt.dataloader.retokenizer import _make_truncated_tokenizer
+            truncated = _make_truncated_tokenizer(tokenizer, vocab_size)
+            encode_fn = lambda texts: [truncated.encode(t).ids for t in texts]
+            print(f"Using truncated tokenizer: {tokenizer.vocab_size} → {vocab_size}")
+        else:
+            encode_fn = lambda texts: tokenizer(texts, add_special_tokens=False)["input_ids"]
+
         ds = load_dataset(hf_dataset, hf_subset or None, split=split, cache_dir=cache_dir or None)
         ds = ds.map(
-            lambda rows: {"input_ids": tokenizer(rows[hf_text_column], add_special_tokens=False)["input_ids"]},
+            lambda rows: {"input_ids": [ids for ids in encode_fn(rows[hf_text_column]) if len(ids) >= min_len]},
             batched=True,
             remove_columns=ds.column_names,
             num_proc=num_proc,
-            desc="Tokenizing",
+            desc="Tokenizing + filtering",
         )
-        ds = ds.filter(lambda row: len(row["input_ids"]) >= min_len, num_proc=num_proc, desc="Filtering short docs")
 
         self._ds = ds
         self.seq_len = seq_len
@@ -75,6 +83,7 @@ def lm_dataset(
     bos_token_id: int,
     eos_token_id: int,
     tokenizer_name: str,
+    vocab_size: int | None = None,
     total_steps: int | None = None,
     seed=None,
     repeat: bool,
@@ -94,7 +103,7 @@ def lm_dataset(
     source = HFTokenizedDataset(
         hf_dataset=hf_dataset, hf_subset=hf_subset, hf_text_column=hf_text_column,
         split=split, seq_len=seq_len, tokenizer_name=tokenizer_name,
-        cache_dir=cache_dir,
+        vocab_size=vocab_size, cache_dir=cache_dir,
     )
     dataset = grain.MapDataset.source(source)
 

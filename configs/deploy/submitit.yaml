@@ -5,9 +5,6 @@ defaults:
   - _self_
 
 deploy_paths:
-  data:
-    dclm_filter_8k: ???
-    books3:  ???
   checkpoint: ${training.checkpoint_path}
 
 # Args found here: https://hydra.cc/docs/plugins/submitit_launcher/

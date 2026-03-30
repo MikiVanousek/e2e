@@ -4,9 +4,6 @@ defaults:
   - _self_
 
 deploy_paths:
-  data:
-    dclm_filter_8k: ???
-    books3: ???
   checkpoint: ${training.checkpoint_path}
 
 backend:

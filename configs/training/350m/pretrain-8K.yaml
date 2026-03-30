@@ -1,9 +1,6 @@
 defaults:
   - /training/base_training@_global_.training
 
-dataset_name: dclm_filter_8k
-data_split: train
-
 total_steps: 13500
 seq_length: 8192
 global_batch_size: 64
