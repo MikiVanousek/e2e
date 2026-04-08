@@ -1,23 +1,24 @@
 # @package _global_
 defaults:
-  - override /training: 14m/ext
-  - override /model: 14m
+  - override /training: smollm2-135m/pretrain-8K
+  - override /model: smollm2-135m
   - _self_
 
 training:
-  resume_exp_name: "14m-e2e-with-bitsperbyte-fix"
-  exp_name: ext-14m-e2e-32K-from-regular
-  seq_length: 32768
-  global_batch_size: 32
-  accum_steps: 2
-
+  exp_name: pretrain-smollm2-135m-e2e-from-hf
   train_mode: meta
+  load_part: params
+  resume_exp_name: "hf://HuggingFaceTB/SmolLM2-135M"
+  resume_step: 0
+  skip_tokens: 0
   spec_inner: ["language_model.**.suffix_blocks.feed_forward_prime.**"]
-  ilr_init: 1
+  ilr_init: 0.1
   optimizer_inner:
     optimizer_type: sgd
     lr: 1
     clip_gradient: 1.0
+  accum_steps: 8
+  num_evals: 7
 
 model:
   seq_modeling_block: SWA
@@ -25,7 +26,8 @@ model:
   unroll_block_scan: True
   mini_batch_size: 1024
   sliding_window_size: 8192
-  rope_theta: 500000
+  rope_theta: 100000
   prime: True
-  suffix_len: 3
-  intermediate_size: 832
+  suffix_len: 1
+  qk_norm: False
+  post_norm: False

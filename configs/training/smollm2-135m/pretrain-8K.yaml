@@ -1,15 +1,16 @@
-# Chinchilla recipe: 20 tokens/param → 14M × 20 = 280M tokens
-# total_steps = 280M / (global_batch_size × seq_length) = 280M / (64 × 8192) ≈ 534
+# Chinchilla recipe: 20 tokens/param → 135M × 20 = 2.7B tokens
+# total_steps = 2.7B / (global_batch_size × seq_length) = 2.7B / (64 × 8192) ≈ 5150
 defaults:
   - /training/base_training@_global_.training
 
+tokenizer_name: HuggingFaceTB/SmolLM2-135M
 dataset_name: dclm_filter_8k
 data_split: train
 
-total_steps: 534
+total_steps: 5150
 seq_length: 8192
 global_batch_size: 64
-ilr_warmup_steps: 54
+ilr_warmup_steps: 515
 
 optimizer_outer:
   optimizer_type: adamw
@@ -19,6 +20,6 @@ optimizer_outer:
   end_lr: 1e-05
   init_lr: 0.0
   lr: 3e-03
-  lr_decay_steps: 534
-  lr_warmup_steps: 54
+  lr_decay_steps: 5150
+  lr_warmup_steps: 515
   weight_decay: 0.1

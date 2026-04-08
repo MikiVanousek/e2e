@@ -1,4 +1,4 @@
-from typing import override
+from typing_extensions import override
 
 import equinox as eqx
 import jax
@@ -72,7 +72,10 @@ class AttentionBase(eqx.Module):
     param_dtype: jnp.dtype = eqx.field(static=True)
 
     num_heads: int = eqx.field(static=True)
+    num_kv_heads: int = eqx.field(static=True)
     head_dim: int = eqx.field(static=True)
+    kv_dim: int = eqx.field(static=True)
+    n_rep: int = eqx.field(static=True)
 
     wq: NormalLinear
     wk: NormalLinear
@@ -95,24 +98,20 @@ class AttentionBase(eqx.Module):
 
         embed_dim = config.hidden_size
         self.num_heads = config.num_attention_heads
+        self.num_kv_heads = config.num_key_value_heads or config.num_attention_heads
         self.head_dim = embed_dim // self.num_heads
+        self.kv_dim = self.num_kv_heads * self.head_dim
+        self.n_rep = self.num_heads // self.num_kv_heads
 
         self.q_norm = nn.RMSNorm(self.head_dim, eps=self.config.rms_norm_eps, use_bias=False, dtype=self.param_dtype)
         self.k_norm = nn.RMSNorm(self.head_dim, eps=self.config.rms_norm_eps, use_bias=False, dtype=self.param_dtype)
 
         keys = jax.random.split(key, 4)
 
-        self.wq, self.wk, self.wv, self.wo = (
-            NormalLinear(
-                self.config,
-                in_features=embed_dim,
-                out_features=embed_dim,
-                std=config.initializer_range,
-                key=w_key,
-                name=name,
-            )
-            for w_key, name in zip(keys, ("wq", "wk", "wv", "wo"))
-        )
+        self.wq = NormalLinear(self.config, in_features=embed_dim, out_features=embed_dim, std=config.initializer_range, key=keys[0], name="wq")
+        self.wk = NormalLinear(self.config, in_features=embed_dim, out_features=self.kv_dim, std=config.initializer_range, key=keys[1], name="wk")
+        self.wv = NormalLinear(self.config, in_features=embed_dim, out_features=self.kv_dim, std=config.initializer_range, key=keys[2], name="wv")
+        self.wo = NormalLinear(self.config, in_features=embed_dim, out_features=embed_dim, std=config.initializer_range, key=keys[3], name="wo")
 
         self.resid_dropout = nn.Dropout(p=config.resid_pdrop)
 
@@ -135,8 +134,19 @@ class AttentionBase(eqx.Module):
     def _split_heads(self, x):
         return tree_rearrange(x, "... (head head_dim) -> ... head head_dim", head=self.num_heads, head_dim=self.head_dim)
 
+    def _split_kv_heads(self, x):
+        return tree_rearrange(x, "... (head head_dim) -> ... head head_dim", head=self.num_kv_heads, head_dim=self.head_dim)
+
     def _merge_heads(self, x):
         return tree_rearrange(x, "... head head_dim -> ... (head head_dim)", head=self.num_heads, head_dim=self.head_dim)
+
+    def _merge_kv_heads(self, x):
+        return tree_rearrange(x, "... head head_dim -> ... (head head_dim)", head=self.num_kv_heads, head_dim=self.head_dim)
+
+    def _repeat_kv(self, x):
+        if self.n_rep == 1:
+            return x
+        return jnp.repeat(x, self.n_rep, axis=-2)
 
     def project_qkv(self, hidden_states):
         xq, xk, xv = self.wq(hidden_states), self.wk(hidden_states), self.wv(hidden_states)
@@ -144,9 +154,10 @@ class AttentionBase(eqx.Module):
         return xq, xk, xv
 
     def get_attention_input(self, hidden_states, position_ids):
-        xq, xk, xv = self.project_qkv(hidden_states)  # [T,D]
+        xq, xk, xv = self.project_qkv(hidden_states)  # [T,D] / [T,kv_dim]
 
-        xq, xk, xv = self._split_heads((xq, xk, xv))  # [T,nh,d]
+        xq = self._split_heads(xq)          # [T, num_heads, d]
+        xk, xv = self._split_kv_heads((xk, xv))  # [T, num_kv_heads, d]
 
         if self.config.qk_norm:
             rms_forward_fn = maybe_double_remat(
@@ -174,6 +185,8 @@ class AttentionBase(eqx.Module):
     def core_attention_op(self, xq, xk, xv, attention_mask):
         if self.config.attn_pdrop > 0.0:
             raise ValueError("Not implemented")
+
+        xk, xv = self._repeat_kv(xk), self._repeat_kv(xv)
 
         if self.config.force_flash:
             xq = jax.lax.with_sharding_constraint(xq, P(None, "state", None))
@@ -206,6 +219,8 @@ class Attention(AttentionBase):
     def __call__(self, hidden_states, seq: Batch, state: nn.State, is_prefix: bool = False):
         xq, xk, xv = self.get_attention_input(hidden_states, position_ids=jnp.arange(seq.shape[0]) if seq.position_ids is None else seq.position_ids)
 
+        xk, xv = self._repeat_kv(xk), self._repeat_kv(xv)
+
         if self.config.force_flash or is_prefix:
             xq = jax.lax.with_sharding_constraint(xq, P(None, "state", None))
             xk = jax.lax.with_sharding_constraint(xk, P(None, "state", None))
@@ -235,6 +250,8 @@ class SWAFull(Attention):
     @override
     def __call__(self, hidden_states, seq: Batch, state: nn.State, is_prefix: bool = False):
         xq, xk, xv = self.get_attention_input(hidden_states, position_ids=jnp.arange(seq.shape[0]) if seq.position_ids is None else seq.position_ids)
+
+        xk, xv = self._repeat_kv(xk), self._repeat_kv(xv)
 
         if self.config.force_flash or is_prefix:
             xq = jax.lax.with_sharding_constraint(xq, P(None, "state", None))
@@ -280,8 +297,8 @@ class SWA(AttentionBase):
 
     def init_kv_cache(self):
         return (
-            jnp.zeros((self.window_size, self.config.hidden_size), dtype=self.compute_dtype),
-            jnp.zeros((self.window_size, self.config.hidden_size), dtype=self.compute_dtype),
+            jnp.zeros((self.window_size, self.kv_dim), dtype=self.compute_dtype),
+            jnp.zeros((self.window_size, self.kv_dim), dtype=self.compute_dtype),
         )
 
     def sw_causal_mask(self, chunk_id):
@@ -305,6 +322,8 @@ class SWA(AttentionBase):
     ):
         xq, xk, xv = self.get_attention_input(hidden_states, position_ids=jnp.arange(seq.shape[0]) if seq.position_ids is None else seq.position_ids)
 
+        xk, xv = self._repeat_kv(xk), self._repeat_kv(xv)
+
         xq = jax.lax.with_sharding_constraint(xq, P(None, "state", None))
         xk = jax.lax.with_sharding_constraint(xk, P(None, "state", None))
         xv = jax.lax.with_sharding_constraint(xv, P(None, "state", None))
@@ -326,7 +345,8 @@ class SWA(AttentionBase):
 
         xq, xk, xv = self.project_qkv(hidden_states)
 
-        xq, xk, xv = self._split_heads((xq, xk, xv))  # [CS,nh,d]
+        xq = self._split_heads(xq)                # [CS, num_heads, d]
+        xk, xv = self._split_kv_heads((xk, xv))   # [CS, num_kv_heads, d]
 
         if self.config.qk_norm:
             rms_forward_fn = maybe_double_remat(
@@ -335,17 +355,17 @@ class SWA(AttentionBase):
             xq = jax.vmap(jax.vmap(lambda x: rms_forward_fn(self.q_norm, x)))(xq)
             xk = jax.vmap(jax.vmap(lambda x: rms_forward_fn(self.k_norm, x)))(xk)
 
-        prev_kv_cache = state.get(self.kv_cache_index)  # [WS,D]
+        prev_kv_cache = state.get(self.kv_cache_index)  # [WS, kv_dim]
         prev_k, prev_v = prev_kv_cache
-        prev_k, prev_v = self._split_heads((prev_k, prev_v))
+        prev_k, prev_v = self._split_kv_heads((prev_k, prev_v))
 
         assert self.mini_batch_size == xq.shape[0]
         assert self.window_size == prev_k.shape[0]
 
-        xk = jnp.concatenate([prev_k, xk], axis=0)  # [CS+WS,nh,d]
+        xk = jnp.concatenate([prev_k, xk], axis=0)  # [CS+WS, num_kv_heads, d]
         xv = jnp.concatenate([prev_v, xv], axis=0)
 
-        new_kv_cache = self._merge_heads((xk[-self.window_size :], xv[-self.window_size :]))  # [WS,D]
+        new_kv_cache = self._merge_kv_heads((xk[-self.window_size :], xv[-self.window_size :]))  # [WS, kv_dim]
 
         xq = self.apply_rope(xq, position_ids=jnp.arange((self.window_size + self.mini_batch_size), dtype=jnp.int32)[-self.mini_batch_size :])
         xk = self.apply_rope(xk, position_ids=jnp.arange((self.window_size + self.mini_batch_size), dtype=jnp.int32))

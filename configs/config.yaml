@@ -7,5 +7,5 @@ defaults:
   - _self_
 
 checkpoint:
-  checkpoint_dir: ${deploy_paths.checkpoint}/${training.exp_folder}/${training.run_name}
+  checkpoint_dir: ${deploy_paths.checkpoint}/${training.exp_folder}/${training.exp_name}
   resume_checkpoint_dir: ${deploy_paths.checkpoint}/${training.exp_folder}/${training.resume_exp_name}

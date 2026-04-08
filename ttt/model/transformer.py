@@ -644,7 +644,7 @@ class MetaModel(eqx.Module):
 
         return loss, (loss_pure_ce, token_nll_loss, lm_outputs.new_state)
 
-    def loss_for_sequence(self, seq: Batch, state: nn.State) -> tuple[jnp.ndarray, dict[MetricType, jnp.ndarray]]:
+    def loss_for_sequence(self, seq: Batch, state: nn.State, *, train_mode: str | None = None) -> tuple[jnp.ndarray, dict[MetricType, jnp.ndarray]]:
         """
         Process a sequence of data and compute the loss for the sequence.
 
@@ -681,8 +681,9 @@ class MetaModel(eqx.Module):
         assert seqlen % tokens_per_chunk == 0, f"For now, seqlen {seqlen} must be divisible by chunk {tokens_per_chunk}"
 
         M = MetaModel.MetricType
+        effective_mode = train_mode if train_mode is not None else cfg.training.train_mode
 
-        if cfg.training.train_mode == "meta":
+        if effective_mode == "meta":
             model: MetaModel = jax.tree.map(lambda p: p.astype(self.state_dtype), self)
             inner_opt_state = model.inner_optimizer(state_all).init(model.inner_parameters())
 
@@ -719,7 +720,7 @@ class MetaModel(eqx.Module):
 
             loss = metrics[M.loss].mean()
 
-        elif cfg.training.train_mode == "pretrain":
+        elif effective_mode == "pretrain":
             metrics: dict[MetaModel.MetricType, jnp.ndarray] = {}
 
             seq = tree_rearrange(seq, "(chunk token) ... -> chunk token ...", token=tokens_per_chunk)
@@ -738,7 +739,7 @@ class MetaModel(eqx.Module):
             loss = loss.mean()
 
         else:
-            raise NotImplementedError(f"Training mode {cfg.training.train_mode} not implemented")
+            raise NotImplementedError(f"Training mode {effective_mode} not implemented")
 
         # Flatten window into data dimension
         metrics = jax.tree.map(lambda x: x if x.ndim == 1 else rearrange(x, "window data ... -> (window data) ..."), metrics)

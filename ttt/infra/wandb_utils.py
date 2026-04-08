@@ -17,7 +17,7 @@ class WandbLogger:
     """
     Handle initialization and logging of a W&B run.
 
-    Every launch creates a new W&B run. Runs sharing the same ``run_name``
+    Every launch creates a new W&B run. Runs sharing the same ``exp_name``
     are grouped together via the W&B *group* field so they can be compared
     side-by-side.
     """
@@ -26,13 +26,12 @@ class WandbLogger:
         self,
         entity: str,
         project: str,
-        run_name: str,
+        exp_name: str,
         log_dir: Path,
         wandb_key: str,
         logging_process: int,
         config: dict = None,
         enabled: bool = True,
-        display_name: str | None = None,
     ):
         import wandb
         from wandb.sdk.wandb_settings import Settings
@@ -41,7 +40,7 @@ class WandbLogger:
         self.is_master = jax.process_index() == logging_process
         self.entity = entity
         self.project = project
-        self.run_name = run_name
+        self.exp_name = exp_name
         self.enabled = enabled
         self.run = None
         self.log_dir = log_dir
@@ -54,19 +53,18 @@ class WandbLogger:
 
         if self.is_master and self.enabled:
             os.environ["WANDB_API_KEY"] = wandb_key
-            if display_name is None:
-                timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
-                display_name = f"{self.run_name}-{timestamp}"
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+            display_name = f"{self.exp_name}-{timestamp}"
             config["overrides"] = list(HydraConfig.get().overrides.task) + list(HydraConfig.get().overrides.hydra)
             self.run = wandb.init(
                 project=self.project,
                 entity=self.entity,
-                group=self.run_name,
+                group=self.exp_name,
                 name=display_name,
                 config=config,
                 settings=self.wandb_settings,
             )
-            master_log(logger, f"Initialized new run: {self.run.name} (ID: {self.run.id}, group: {self.run_name})")
+            master_log(logger, f"Initialized new run: {self.run.name} (ID: {self.run.id}, group: {self.exp_name})")
 
     def __enter__(self):
         return self

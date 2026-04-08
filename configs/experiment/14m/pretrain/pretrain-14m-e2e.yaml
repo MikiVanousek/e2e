@@ -5,8 +5,6 @@ defaults:
   - _self_
 
 training:
-  exp_name: pretrain-14m-e2e
-  run_name: pretrain-14m-e2e
   train_mode: meta
   spec_inner: ["language_model.**.suffix_blocks.feed_forward_prime.**"]
   ilr_init: 0.1

@@ -103,6 +103,9 @@ class Checkpointer:
         )
 
     def save_checkpoint(self, step: int, model: MetaModel, opt_state: OptState, train_ds_iter, is_milestone: bool = False):
+        if step in self.manager.all_steps():
+            return
+
         model_weights = model.weights()
 
         self.manager.save(
@@ -191,7 +194,7 @@ def make_save_checkpoint(
 M = TypeVar("M", bound=eqx.Module)
 
 
-def unify_dict_with_eqx_module[M: eqx.Module](d: dict, module: M) -> tuple[M, list[str]]:
+def unify_dict_with_eqx_module(d: dict, module: eqx.Module) -> tuple[eqx.Module, list[str]]:
     """
     Create an Equinox module from the data in dictionary `d`, relying on the structure being the same (although the key type might differ).
     Values missing in the dictionary will be taken from the module.
@@ -228,7 +231,7 @@ def unify_dict_with_eqx_module[M: eqx.Module](d: dict, module: M) -> tuple[M, li
     return new_module, not_found_paths
 
 
-def fetch_from_eqx_module[M: eqx.Module](d: dict, module: M) -> tuple[M, list[str]]:
+def fetch_from_eqx_module(d: dict, module: eqx.Module) -> tuple[eqx.Module, list[str]]:
     """
     Fetch values from the module and put them in the dictionary `d`.
     """

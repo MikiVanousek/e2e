@@ -16,7 +16,7 @@ class HFTokenizedDataset(grain.RandomAccessDataSource):
     def __init__(self, *, hf_dataset: str, hf_subset: str | None, hf_text_column: str,
                  split: str, seq_len: int, tokenizer_name: str,
                  vocab_size: int | None = None,
-                 cache_dir: str | None = None, num_proc: int = 4):
+                 cache_dir: str | None = None, num_proc: int = 8):
         from datasets import load_dataset
         from transformers import AutoTokenizer
 

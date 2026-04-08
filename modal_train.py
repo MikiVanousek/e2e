@@ -31,7 +31,7 @@ image = (
     timeout=6 * 3600,
     secrets=[modal.Secret.from_name("default")],
     volumes={"/data": hf_cache_volume},
-    cpu=16,
+    cpu=64,
     memory=32768,
 )
 def download_dataset(hf_dataset: str = "HuggingFaceFW/fineweb-edu", hf_subset: str = "sample-10BT", split: str = "train"):
@@ -63,7 +63,6 @@ def train(
     experiment: str,
     wandb_entity: str = "miki-aisle",
     wandb_project: str = "e2e-ttt",
-    wandb_name: str = "",
     fast_compile: bool = False,
 ):
     hf_cache_volume.reload()
@@ -91,9 +90,6 @@ def train(
         "backend.compilation_cache_dir=/jax_cache",
         "dataset.hf_cache_dir=/data",
     ]
-    if wandb_name:
-        cmd.append(f"training.wandb_display_name={wandb_name}")
-
     subprocess.run(cmd, check=True, cwd="/app", env=env)
     jax_cache_volume.commit()
     checkpoint_volume.commit()
@@ -104,7 +100,7 @@ def train(
     timeout=6 * 3600,
     secrets=[modal.Secret.from_name("default")],
     volumes={"/data": hf_cache_volume},
-    cpu=16,
+    cpu=32,
     memory=32768,
 )
 def preprocess_dataset(experiment: str):
@@ -125,15 +121,13 @@ def main(
     experiment: str = "125m/pretrain/simple",
     wandb_entity: str = "miki-aisle",
     wandb_project: str = "e2e-ttt",
-    wandb_name: str = "",
     fast_compile: bool = False,
 ):
     """Download dataset (CPU) then train (GPU)."""
-    download_dataset.remote()
+    # download_dataset.remote()
     train.remote(
         experiment=experiment,
         wandb_entity=wandb_entity,
         wandb_project=wandb_project,
-        wandb_name=wandb_name,
         fast_compile=fast_compile,
     )

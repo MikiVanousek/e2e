@@ -80,6 +80,7 @@ class ModelConfig:
     intermediate_size: int = 2048
     num_hidden_layers: int = 12
     num_attention_heads: int = 12
+    num_key_value_heads: int | None = None
     mini_batch_size: int = 1024
     sliding_window_size: int = 1024
     seq_len: int = 131072
@@ -146,8 +147,8 @@ class TrainingConfig:
     load_part: LoadPart = LoadPart.none  # params, all, none
     total_steps: int = 2500
     break_step: int = -1
-    save_milestone_freq: int = 2500
-    tokenizer_name: str = "meta-llama/Llama-2-7b-hf"
+
+    tokenizer_name: str = "meta-llama/Llama-3.1-8B"
     dataset_name: str = ""
     seq_length: int = 1024
     global_batch_size: int = 8
@@ -157,9 +158,8 @@ class TrainingConfig:
     checkpoint_path: str = "./checkpoints"
     exp_dir: str = "./experiments"
     exp_folder: str = "demo"
-    exp_name: str = MISSING
-    run_name: str = MISSING
-    wandb_display_name: str = ""
+    exp_name: str = ""
+
     resume_exp_name: str = ""
     resume_step: int | None = None
     eval_mode: bool = False
@@ -178,7 +178,7 @@ class TrainingConfig:
     ilr_init: float = 1.0
     eval_batch_size: int = 8
     max_eval_batches: int = 150
-    num_evals: int = 1
+    num_evals: int = 6
     skip_tokens: int = 0
     chunks_dir: str = ""
     preprocess_chunk_idx: int = -1

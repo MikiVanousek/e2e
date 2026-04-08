@@ -6,7 +6,6 @@ defaults:
 
 training:
   exp_name: pretrain-14m-e2e-from-fa
-  run_name: pretrain-14m-e2e-from-fa
   train_mode: meta
   load_part: params
   resume_exp_name: "pretrain-14m-fa"

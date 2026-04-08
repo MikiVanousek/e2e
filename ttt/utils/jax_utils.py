@@ -236,11 +236,11 @@ def scan_remat_chunk(f, carry, x, *, remat_n_loops: int, unroll: bool):
     return carry, result
 
 
-def tree_slice[T: PyTree](tree: T, i: int) -> T:
+def tree_slice(tree: PyTree, i: int) -> PyTree:
     return jax.tree.map(lambda x: x[i], tree)
 
 
-def tree_rearrange[T: PyTree](tree: T, pattern: str, **axes_lengths) -> T:
+def tree_rearrange(tree: PyTree, pattern: str, **axes_lengths) -> PyTree:
     def rearrange_fn(x):
         return rearrange(x, pattern, **axes_lengths)
 

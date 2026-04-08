@@ -17,6 +17,7 @@ from tqdm import tqdm as _tqdm
 from ttt.config import Config, register_configs
 from ttt.dataloader.lm_dataset import dummy_dataset, lm_dataset
 from ttt.infra.checkpoint import Checkpointer, unify_dict_with_eqx_module
+from ttt.infra.hf_weights import load_hf_into_model
 from ttt.infra.wandb_utils import WandbLogger
 from ttt.model.loop import Evaluator, train_on_sequence
 from ttt.model.sharding import ModelSharding
@@ -112,13 +113,12 @@ def _main(cfg: Config) -> None:
     wandb_logger = WandbLogger(
         entity=cfg.training.wandb_entity,
         project=cfg.training.wandb_project,
-        run_name=cfg.training.run_name,
+        exp_name=cfg.training.exp_name,
         log_dir=log_dir,
         wandb_key=cfg.training.wandb_key,
         logging_process=0,
         config=cfg_dict,
         enabled=cfg.training.log_wandb,
-        display_name=cfg.training.wandb_display_name or None,
     )
 
     dev_info = f"Process # {n_host}\tLocal dev # {local_dev_num}\tTotal dev # {global_dev_num}"
@@ -154,7 +154,17 @@ def _main(cfg: Config) -> None:
         return opt_state
 
     continued_run = False
-    if (continued_run and checkpointer.checkpoint_exists()) or cfg.training.load_part != "none":
+    hf_resume = cfg.training.resume_exp_name.startswith("hf://")
+
+    if hf_resume:
+        repo_id = cfg.training.resume_exp_name[len("hf://"):]
+        master_log(logger, f"Loading weights from HuggingFace: {repo_id}")
+        model, state = create_sharded_model_and_state()
+        model = load_hf_into_model(repo_id, model, cfg.model)
+        opt_state = optimizer_outer_loop.init(model.trainable_parameters())
+        start_step = 0
+
+    elif (continued_run and checkpointer.checkpoint_exists()) or cfg.training.load_part != "none":
         if continued_run and checkpointer.checkpoint_exists():
             load_part = "all"  # Resuming from the current checkpointing directory requires the optimizer and loop state
             load_checkpointer = checkpointer
@@ -229,8 +239,11 @@ def _main(cfg: Config) -> None:
     assert total_steps >= 1, "Total step must >=1, otherwise, lower global batch size"
     master_log(logger, f"Total steps: {total_steps}")
 
-    num_evals = cfg.training.num_evals
-    eval_steps = {total_steps * (i + 1) // num_evals - 1 for i in range(num_evals)}
+    num_evals = min(cfg.training.num_evals, total_steps)
+    if num_evals == 1:
+        eval_steps = {total_steps - 1}
+    else:
+        eval_steps = {(total_steps - 1) * i // (num_evals - 1) for i in range(num_evals)}
     eval_dataset_len = len(evaluator.train_holdout_loader)
     max_eval_batches = min(cfg.training.max_eval_batches, max(1, -(-eval_dataset_len // num_evals)))
     master_log(logger, f"Eval at steps: {sorted(eval_steps)} ({max_eval_batches} batches each, {eval_dataset_len} total)")
@@ -262,19 +275,15 @@ def _main(cfg: Config) -> None:
 
             wandb_logger.log(update, step)
 
-            if (cfg.training.save_milestone_freq > 0 and step % cfg.training.save_milestone_freq == 0 and step != 0) or (step == cfg.training.total_steps - 1):
+            if step in eval_steps:
                 master_log(logger, f"Saving checkpoint at step {step}, do not kill...")
-                is_milestone = (cfg.training.save_milestone_freq > 0) and (step % cfg.training.save_milestone_freq == 0)
-
                 checkpointer.save_checkpoint(
                     step=step,
                     model=model,
                     opt_state=opt_state,
                     train_ds_iter=train_ds_iter,
-                    is_milestone=is_milestone,
+                    is_milestone=True,
                 )
-
-                # Make sure the previous checkpoint is finished since we'll donate the weights the next loop
                 checkpointer.wait_until_finished()
 
             if step in eval_steps:
@@ -288,6 +297,14 @@ def _main(cfg: Config) -> None:
 
 @hydra.main(version_base=None, config_path=str(Path("configs").absolute().resolve()), config_name="config")
 def main(cfg: Config):
+    from hydra.core.hydra_config import HydraConfig
+    from omegaconf import open_dict
+
+    with open_dict(cfg):
+        if not cfg.training.exp_name:
+            choices = HydraConfig.get().runtime.choices
+            cfg.training.exp_name = Path(choices.get("experiment", "default")).name
+
     if cfg.backend.compilation_cache_dir is not None:
         import jax
 

@@ -12,7 +12,7 @@ from jaxtyping import PyTree
 _T = tp.TypeVar("_T", bound=PyTree)
 
 
-def tree_slice[T: PyTree](tree: _T, i: int) -> _T:
+def tree_slice(tree: _T, i: int) -> _T:
     return jax.tree.map(lambda x: x[i], tree)
 
 
