@@ -119,6 +119,7 @@ def _main(cfg: Config) -> None:
         logging_process=0,
         config=cfg_dict,
         enabled=cfg.training.log_wandb,
+        tags=list(cfg.training.wandb_tags),
     )
 
     dev_info = f"Process # {n_host}\tLocal dev # {local_dev_num}\tTotal dev # {global_dev_num}"
@@ -272,6 +273,9 @@ def _main(cfg: Config) -> None:
                 "gradient_norm": jax.device_get(metrics[M.outer_grad_norm]).item(),
                 "outer_learning_rate": jnp.asarray(optimizer_info_outer_loop["learning_rate_schedule"](int(opt_state[1][2].count) - 1)).item(),
             }
+            if M.prime_grad_norm in metrics:
+                update["gradient_norm/prime"] = jax.device_get(metrics[M.prime_grad_norm]).item()
+                update["gradient_norm/pretrained"] = jax.device_get(metrics[M.pretrained_grad_norm]).item()
 
             wandb_logger.log(update, step)
 

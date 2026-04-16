@@ -32,6 +32,7 @@ class WandbLogger:
         logging_process: int,
         config: dict = None,
         enabled: bool = True,
+        tags: list[str] | None = None,
     ):
         import wandb
         from wandb.sdk.wandb_settings import Settings
@@ -62,6 +63,7 @@ class WandbLogger:
                 group=self.exp_name,
                 name=display_name,
                 config=config,
+                tags=tags or [],
                 settings=self.wandb_settings,
             )
             master_log(logger, f"Initialized new run: {self.run.name} (ID: {self.run.id}, group: {self.exp_name})")

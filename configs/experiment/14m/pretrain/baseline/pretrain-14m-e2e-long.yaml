@@ -5,6 +5,9 @@ defaults:
   - _self_
 
 training:
+  exp_name: pretrain-14m-e2e-long
+  wandb_project: thesis-14m
+  wandb_tags: [pretrain, e2e-scratch, baseline]
   train_mode: meta
   spec_inner: ["language_model.**.suffix_blocks.feed_forward_prime.**"]
   ilr_init: 0.1
@@ -13,11 +16,11 @@ training:
     lr: 1
     clip_gradient: 1.0
 
-  total_steps: 4500
+  total_steps: 1500
   global_batch_size: 64
 
   eval_batch_size: 128
-  num_evals: 25
+  num_evals: 15
   ilr_warmup_steps: 150
   optimizer_outer:
     lr_decay_steps: 1500

@@ -5,14 +5,14 @@ defaults:
   - _self_
 
 training:
-  exp_name: pretrain-14m-e2e-from-fa
+  exp_name: pretrain-14m-e2e-from-fa-convergence
   wandb_project: thesis-14m
-  wandb_tags: [pretrain, e2e-from-fa, treatment]
+  wandb_tags: [pretrain, e2e-from-fa, treatment, convergence]
   train_mode: meta
   load_part: params
   resume_exp_name: "pretrain-14m-fa"
-  resume_step: 533
-  skip_tokens: 279969792
+  resume_step: 1499
+  skip_tokens: 786432000
   spec_inner: ["language_model.**.suffix_blocks.feed_forward_prime.**"]
   ilr_init: 0.1
   optimizer_inner:

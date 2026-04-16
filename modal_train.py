@@ -62,7 +62,7 @@ print(f"Downloaded {{len(ds)}} rows")
 def train(
     experiment: str,
     wandb_entity: str = "miki-aisle",
-    wandb_project: str = "e2e-ttt",
+    wandb_project: str | None = None,
     fast_compile: bool = False,
 ):
     hf_cache_volume.reload()
@@ -84,12 +84,13 @@ def train(
         f"+experiment={experiment}",
         "training.checkpoint_path=/checkpoints",
         f"training.wandb_entity={wandb_entity}",
-        f"training.wandb_project={wandb_project}",
         f"training.wandb_key={os.environ['WANDB_API_KEY']}",
         "backend.num_devices=1",
         "backend.compilation_cache_dir=/jax_cache",
         "dataset.hf_cache_dir=/data",
     ]
+    if wandb_project is not None:
+        cmd.append(f"training.wandb_project={wandb_project}")
     subprocess.run(cmd, check=True, cwd="/app", env=env)
     jax_cache_volume.commit()
     checkpoint_volume.commit()
@@ -120,7 +121,7 @@ def preprocess_dataset(experiment: str):
 def main(
     experiment: str = "125m/pretrain/simple",
     wandb_entity: str = "miki-aisle",
-    wandb_project: str = "e2e-ttt",
+    wandb_project: str | None = None,
     fast_compile: bool = False,
 ):
     """Download dataset (CPU) then train (GPU)."""

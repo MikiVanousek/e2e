@@ -6,6 +6,8 @@ defaults:
 
 training:
   exp_name: ext-14m-fa-32K
+  wandb_project: thesis-14m
+  wandb_tags: [extension, fa, baseline]
   seq_length: 32768
   global_batch_size: 32
 

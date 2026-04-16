@@ -97,6 +97,9 @@ class PrimeStorage(eqx.Module):
             raise NotImplementedError("Only feed_forward_prime='swiglu' is supported.")
 
         self.feed_forward_prime = jax.vmap(lambda k: SwiGLUMLP(config, key=k))(suffix_keys)
+        if config.prime_zero_init:
+            zero_w2 = jnp.zeros_like(self.feed_forward_prime.w2.weight)
+            self.feed_forward_prime = eqx.tree_at(lambda m: m.w2.weight, self.feed_forward_prime, zero_w2)
         self.ffn_prime_norm = jax.vmap(lambda _: nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps, use_bias=False, dtype=param_dtype))(suffix_keys)
         self.ffn_prime_post_norm = jax.vmap(lambda _: nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps, use_bias=False, dtype=param_dtype))(suffix_keys)
 
@@ -537,6 +540,8 @@ class MetaModel(eqx.Module):
         loss = auto()
         token_nll_loss = auto()
         outer_grad_norm = auto()
+        prime_grad_norm = auto()
+        pretrained_grad_norm = auto()
 
     config: Config = eqx.field(static=True, repr=False)
     compute_dtype: jnp.dtype = eqx.field(static=True)

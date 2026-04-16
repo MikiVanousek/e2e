@@ -1,5 +1,4 @@
 # @package _global_
-# The goal is to produce an overtrained models and checkpoints on the way. 
 defaults:
   - override /training: 14m/pretrain-8K
   - override /model: 14m
@@ -7,16 +6,9 @@ defaults:
 
 training:
   exp_name: pretrain-14m-fa
+  wandb_project: thesis-14m
+  wandb_tags: [pretrain, fa, baseline]
   train_mode: pretrain
-  total_steps: 1500
-  global_batch_size: 64
-
-  eval_batch_size: 128
-  num_evals: 15
-  ilr_warmup_steps: 150
-  optimizer_outer:
-    lr_decay_steps: 1500
-    lr_warmup_steps: 150
 
 model:
   seq_modeling_block: self_attention

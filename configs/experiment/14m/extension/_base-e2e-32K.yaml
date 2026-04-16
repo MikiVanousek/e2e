@@ -5,8 +5,8 @@ defaults:
   - _self_
 
 training:
-  resume_exp_name: "14m-e2e-with-bitsperbyte-fix"
-  exp_name: ext-14m-e2e-32K-from-regular
+  wandb_project: thesis-14m
+  load_part: params
   seq_length: 32768
   global_batch_size: 32
   accum_steps: 2
@@ -27,5 +27,5 @@ model:
   sliding_window_size: 8192
   rope_theta: 500000
   prime: True
-  suffix_len: 3
+  suffix_len: 1
   intermediate_size: 832

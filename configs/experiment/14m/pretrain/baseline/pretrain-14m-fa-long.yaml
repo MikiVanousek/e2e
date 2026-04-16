@@ -6,7 +6,9 @@ defaults:
   - _self_
 
 training:
-  exp_name: pretrain-14m-fa
+  exp_name: pretrain-14m-fa-match-long
+  wandb_project: thesis-14m
+  wandb_tags: [pretrain, fa, baseline]
   train_mode: pretrain
   total_steps: 1500
   global_batch_size: 64

@@ -17,8 +17,8 @@ from ttt.infra.wandb_utils import WandbLogger
 from ttt.model.data import Batch
 from ttt.model.transformer import MetaModel
 from ttt.optimizers import make_optimizer
-from ttt.utils.filter_utils import filter_apply_updates
-from ttt.utils.jax_utils import global_norm_safe, master_log, tree_rearrange, vmap_mean, welfords_online_mean
+from ttt.utils.filter_utils import filter_apply_updates, filter_parameters
+from ttt.utils.jax_utils import global_norm_safe, master_log, safe_sqrt, tree_rearrange, vmap_mean, welfords_online_mean
 
 logger = logging.getLogger(__name__)
 
@@ -286,6 +286,17 @@ def train_on_sequence(
     avg_grads_meta = avg_grads_meta.trainable_parameters()  # Handle frozen parameter spec
     avg_outer_gnorm = global_norm_safe(avg_grads_meta)
     avg_metrics[M.outer_grad_norm] = avg_outer_gnorm
+
+    if cfg.model.prime:
+        prime_specs = [
+            "**.prime_storage.feed_forward_prime.**",
+            "**.prime_storage.ffn_prime_norm.**",
+            "**.prime_storage.ffn_prime_post_norm.**",
+        ]
+        prime_grads = filter_parameters(avg_grads_meta, prime_specs, "prime gradients")
+        prime_gnorm = global_norm_safe(prime_grads)
+        avg_metrics[M.prime_grad_norm] = prime_gnorm
+        avg_metrics[M.pretrained_grad_norm] = safe_sqrt(avg_outer_gnorm**2 - prime_gnorm**2)
 
     outer_tx, _ = make_optimizer(cfg.training.optimizer_outer)
     updates, opt_state = outer_tx.update(avg_grads_meta, opt_state, meta_model.trainable_parameters())

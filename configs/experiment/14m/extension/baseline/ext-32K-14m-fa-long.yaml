@@ -1,0 +1,9 @@
+# @package _global_
+defaults:
+  - 14m/extension/_base-fa-32K
+  - _self_
+
+training:
+  exp_name: ext-32K-14m-fa-long
+  resume_exp_name: pretrain-14m-fa-match-long
+  wandb_tags: [extension, fa, baseline]

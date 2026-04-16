@@ -1,27 +1,25 @@
 # @package _global_
 defaults:
-  - override /training: 14m/pretrain-8K
+  - override /training: 14m/ext
   - override /model: 14m
   - _self_
 
 training:
+  resume_exp_name: "14m-e2e-with-bitsperbyte-fix"
+  exp_name: ext-14m-e2e-32K-from-regular
+  wandb_project: thesis-14m
+  wandb_tags: [extension, e2e-scratch]
+  seq_length: 32768
+  global_batch_size: 32
+  accum_steps: 2
+
   train_mode: meta
   spec_inner: ["language_model.**.suffix_blocks.feed_forward_prime.**"]
-  ilr_init: 0.1
+  ilr_init: 1
   optimizer_inner:
     optimizer_type: sgd
     lr: 1
     clip_gradient: 1.0
-
-  total_steps: 1500
-  global_batch_size: 64
-
-  eval_batch_size: 128
-  num_evals: 15
-  ilr_warmup_steps: 150
-  optimizer_outer:
-    lr_decay_steps: 1500
-    lr_warmup_steps: 150
 
 model:
   seq_modeling_block: SWA

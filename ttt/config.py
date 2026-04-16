@@ -117,6 +117,7 @@ class ModelConfig:
     pre_norm: bool = True
     post_norm: bool = True
     feed_forward_prime: str = "swiglu"  # Only "swiglu" is supported.
+    prime_zero_init: bool = False
 
 
 @dataclass(unsafe_hash=True, eq=True)
@@ -142,6 +143,7 @@ class TrainingConfig:
     wandb_entity: str = MISSING
     wandb_project: str = MISSING
     wandb_key: str = MISSING
+    wandb_tags: list[str] = field(default_factory=list)
     model_seed: int = 0
     data_seed: int = 0
     load_part: LoadPart = LoadPart.none  # params, all, none

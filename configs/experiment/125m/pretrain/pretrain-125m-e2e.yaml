@@ -6,6 +6,8 @@ defaults:
 
 training:
   exp_name: pretrain-125m-e2e
+  wandb_project: thesis-125m
+  wandb_tags: [pretrain, e2e-scratch, baseline]
   train_mode: meta
   spec_inner: ["language_model.**.suffix_blocks.feed_forward_prime.**"]
   ilr_init: 0.1
