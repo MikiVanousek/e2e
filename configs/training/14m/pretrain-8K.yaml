@@ -4,12 +4,14 @@ defaults:
   - /training/base_training@_global_.training
 
 dataset_name: dclm_filter_8k
-data_split: train
+data_split: "train[5%:]"
+eval_split: "train[:5%]"
 
 total_steps: 534
 seq_length: 8192
 global_batch_size: 64
 ilr_warmup_steps: 54
+max_eval_batches: 150
 
 optimizer_outer:
   optimizer_type: adamw

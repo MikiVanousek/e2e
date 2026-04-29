@@ -3,7 +3,9 @@
 defaults:
   - /training/base_training@_global_.training
 
-dataset_name: books3
+dataset_name: pg19
+data_split: "train"
+eval_split: "validation"
 
 total_steps: 14
 ilr_warmup_steps: 0

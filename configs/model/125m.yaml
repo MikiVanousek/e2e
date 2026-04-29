@@ -1,14 +1,10 @@
 defaults:
-  - base_model
+  - /model/base_model@_global_.model
 
-name: 125m
 vocab_size: 128256
-bos_token_id: 128000
-eos_token_id: 128001
-num_hidden_layers: 12
 hidden_size: 768
-num_attention_heads: 12
 intermediate_size: 2048
-initializer_range: 0.02
-rms_norm_eps: 1e-6
-tie_word_embeddings: True
+num_hidden_layers: 12
+num_attention_heads: 12
+rms_norm_eps: 1.0e-6
+tie_word_embeddings: true

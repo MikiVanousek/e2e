@@ -68,7 +68,7 @@ def _to_batch(data: np.ndarray, *, bos_token_id: int, eos_token_id: int) -> Batc
     return Batch(
         input_ids=tokens[:-1],
         target_tokens=tokens[1:],
-        loss_masks=(tokens[1:] != bos_token_id),
+        loss_masks=np.ones_like(tokens[1:], dtype=bool),
     )
 
 

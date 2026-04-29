@@ -146,6 +146,7 @@ class TrainingConfig:
     wandb_tags: list[str] = field(default_factory=list)
     model_seed: int = 0
     data_seed: int = 0
+    shuffle_train: bool = True
     load_part: LoadPart = LoadPart.none  # params, all, none
     total_steps: int = 2500
     break_step: int = -1

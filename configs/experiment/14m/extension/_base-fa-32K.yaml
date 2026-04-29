@@ -2,6 +2,7 @@
 defaults:
   - override /training: 14m/ext
   - override /model: 14m
+  - override /dataset: pg19
   - _self_
 
 training:
@@ -9,6 +10,7 @@ training:
   load_part: params
   seq_length: 32768
   global_batch_size: 32
+  num_evals: 2
 
 model:
   seq_modeling_block: self_attention
@@ -17,3 +19,4 @@ model:
   rope_theta: 2000000
   remat_block: nothing_saveable
   remat_block_bwd: nothing_saveable
+  intermediate_size: 832

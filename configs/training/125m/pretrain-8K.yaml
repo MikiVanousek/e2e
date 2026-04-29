@@ -1,10 +1,18 @@
+# Chinchilla recipe: 20 tokens/param → 125M × 20 = 2.5B tokens
+# total_steps = 2.5B / (global_batch_size × seq_length) = 2.5B / (64 × 8192) ≈ 4800
 defaults:
   - /training/base_training@_global_.training
+
+dataset_name: dclm_filter_8k
+data_split: "train[5%:]"
+eval_split: "train[:5%]"
 
 total_steps: 4800
 seq_length: 8192
 global_batch_size: 64
+accum_steps: 2
 ilr_warmup_steps: 480
+max_eval_batches: 150
 
 optimizer_outer:
   optimizer_type: adamw
@@ -17,5 +25,3 @@ optimizer_outer:
   lr_decay_steps: 4800
   lr_warmup_steps: 480
   weight_decay: 0.1
-
-  

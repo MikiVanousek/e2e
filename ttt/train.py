@@ -58,6 +58,7 @@ def _make_train_iterator(cfg: Config, model_cfg, data_sharding: jax.sharding.Sha
             vocab_size=model_cfg.vocab_size,
             cache_dir=cfg.dataset.hf_cache_dir,
             total_steps=cfg.training.total_steps,
+            shuffle=cfg.training.shuffle_train,
         )
         if not cfg.training.dummy_dataset
         else dummy_dataset(

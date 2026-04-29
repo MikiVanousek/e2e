@@ -5,10 +5,11 @@ defaults:
   - _self_
 
 training:
-  exp_name: pretrain-14m-fa
+  exp_name: pretrain-14m-fa-noshuffle
   wandb_project: thesis-14m
-  wandb_tags: [pretrain, fa, baseline]
+  wandb_tags: [pretrain, fa, baseline, noshuffle]
   train_mode: pretrain
+  shuffle_train: false
 
 model:
   seq_modeling_block: self_attention

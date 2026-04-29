@@ -6,6 +6,7 @@ defaults:
 
 training:
   exp_name: pretrain-125m-fa
+  wandb_project: thesis-125m
   train_mode: pretrain
 
 model:

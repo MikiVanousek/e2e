@@ -2,6 +2,7 @@
 defaults:
   - override /training: 14m/ext
   - override /model: 14m
+  - override /dataset: pg19
   - _self_
 
 training:
@@ -10,6 +11,7 @@ training:
   seq_length: 32768
   global_batch_size: 32
   accum_steps: 2
+  num_evals: 2
 
   train_mode: meta
   spec_inner: ["language_model.**.suffix_blocks.feed_forward_prime.**"]
