@@ -1,0 +1,16 @@
+# @package _global_
+defaults:
+  - 125m/extension/_base-e2e
+  - _self_
+
+training:
+  exp_name: ext-32K-125m-e2e-from-fa-zero
+  resume_exp_name: pretrain-125m-fa
+  wandb_tags: [extension, e2e-from-fa, treatment, zero-init, 32K]
+  seq_length: 32768
+  global_batch_size: 32
+  accum_steps: 8
+
+model:
+  prime_zero_init: True
+  intermediate_size: 2048

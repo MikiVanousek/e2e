@@ -1,0 +1,16 @@
+# @package _global_
+defaults:
+  - 125m/extension/_base-ip-ttt
+  - _self_
+
+training:
+  exp_name: ext-32K-125m-ip-ttt-next-current-layer
+  resume_exp_name: pretrain-125m-ip-ttt-next-current-layer
+  wandb_tags: [extension, ip-ttt, treatment, next-current-layer, 32K]
+  seq_length: 32768
+  global_batch_size: 32
+  accum_steps: 8
+
+model:
+  ip_ttt_target: next_current_layer
+  mini_batch_size: 32768

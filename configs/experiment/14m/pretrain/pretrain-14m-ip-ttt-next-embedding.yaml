@@ -5,10 +5,11 @@ defaults:
   - _self_
 
 training:
-  exp_name: pretrain-14m-fa
+  exp_name: pretrain-14m-ip-ttt-next-embedding
   wandb_project: thesis-14m
-  wandb_tags: [pretrain, fa, baseline]
+  wandb_tags: [pretrain, ip-ttt, treatment, next-embedding]
   train_mode: pretrain
+  num_evals: 7
 
 model:
   seq_modeling_block: self_attention
@@ -18,3 +19,9 @@ model:
   remat_block: nothing_saveable
   remat_block_bwd: nothing_saveable
   intermediate_size: 832
+  ip_ttt: true
+  ip_ttt_layers: [5]
+  ip_ttt_chunk: 1024
+  ip_ttt_lr: 3.0
+  ip_ttt_proj: true
+  ip_ttt_target: next_embedding

@@ -2,12 +2,14 @@
 defaults:
   - override /training: 125m/ext
   - override /model: 125m
+  - override /dataset: pg19
   - _self_
 
 training:
-  exp_name: ext-125m-e2e-32K
-  seq_length: 32768
-  global_batch_size: 32
+  resume_exp_name: pretrain-125m-e2e
+  wandb_project: thesis-125m
+  load_part: params
+  num_evals: 2
   train_mode: meta
   spec_inner: ["language_model.**.suffix_blocks.feed_forward_prime.**"]
   ilr_init: 1
@@ -15,7 +17,7 @@ training:
     optimizer_type: sgd
     lr: 1
     clip_gradient: 1.0
-  
+
 model:
   seq_modeling_block: SWA
   force_flash: False

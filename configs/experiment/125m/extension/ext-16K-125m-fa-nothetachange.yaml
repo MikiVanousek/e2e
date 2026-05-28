@@ -1,0 +1,15 @@
+# @package _global_
+defaults:
+  - 125m/extension/_base-fa
+  - _self_
+
+training:
+  exp_name: ext-16K-125m-fa-nothetachange
+  wandb_tags: [extension, fa, baseline, 16K, nothetachange]
+  seq_length: 16384
+  global_batch_size: 64
+  accum_steps: 8
+
+model:
+  mini_batch_size: 16384
+  rope_theta: 500000

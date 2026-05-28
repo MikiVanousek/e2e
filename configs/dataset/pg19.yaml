@@ -1,0 +1,6 @@
+defaults:
+  - /dataset/base_dataset@_here_
+
+hf_dataset: emozilla/pg19
+hf_subset: ""
+hf_text_column: text

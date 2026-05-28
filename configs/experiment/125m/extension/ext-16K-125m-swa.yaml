@@ -1,0 +1,14 @@
+# @package _global_
+defaults:
+  - 125m/extension/_base-swa
+  - _self_
+
+training:
+  exp_name: ext-16K-125m-swa
+  wandb_tags: [extension, swa, baseline, 16K]
+  seq_length: 16384
+  global_batch_size: 64
+  accum_steps: 8
+
+model:
+  mini_batch_size: 16384

@@ -1,0 +1,13 @@
+# @package _global_
+defaults:
+  - 14m/extension/_base-ip-ttt
+  - _self_
+
+training:
+  exp_name: ext-32K-14m-ip-ttt
+  wandb_tags: [extension, ip-ttt, treatment, 32K]
+  seq_length: 32768
+  global_batch_size: 32
+
+model:
+  mini_batch_size: 32768

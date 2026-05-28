@@ -1,0 +1,18 @@
+# @package _global_
+# Ablation of ext-32K-14m-fa: keeps RoPE base at the pretrain value (500K)
+# instead of rescaling to 2M. Tests whether the FA-vs-SWA inversion at 32K
+# is driven by the RoPE rescale + 14-step extension budget rather than
+# full attention itself.
+defaults:
+  - 14m/extension/_base-fa
+  - _self_
+
+training:
+  exp_name: ext-32K-14m-fa-norope
+  wandb_tags: [extension, fa, ablation, 32K, no-rope-rescale]
+  seq_length: 32768
+  global_batch_size: 32
+
+model:
+  mini_batch_size: 32768
+  rope_theta: 500000

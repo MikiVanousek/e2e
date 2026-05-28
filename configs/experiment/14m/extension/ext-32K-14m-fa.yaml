@@ -1,0 +1,14 @@
+# @package _global_
+defaults:
+  - 14m/extension/_base-fa
+  - _self_
+
+training:
+  exp_name: ext-32K-14m-fa
+  wandb_tags: [extension, fa, baseline, 32K]
+  seq_length: 32768
+  global_batch_size: 32
+
+model:
+  mini_batch_size: 32768
+  rope_theta: 2000000

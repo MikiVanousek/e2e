@@ -60,6 +60,20 @@ def eval_step_fn_no_ttt(
     return avg_metrics
 
 
+@eqx.filter_jit
+@eqx.filter_vmap(axis_name="data_parallel", in_axes=(None, 0, None), out_axes=None)
+def eval_step_fn_no_ip_ttt(
+    meta_model: MetaModel,
+    seq: Batch,
+    state: eqx.nn.State,
+):
+    """Evaluate with IP-TTT disabled (vanilla MLP forward)."""
+    model_no_ttt = meta_model.with_ip_ttt_disabled()
+    loss, metrics = model_no_ttt.loss_for_sequence(seq, state)
+    _avg_loss, avg_metrics = jax.lax.pmean((loss, metrics), axis_name="data_parallel")
+    return avg_metrics
+
+
 class Evaluator:
     """
     Contains data loading and evaluation logic + state.
@@ -148,6 +162,8 @@ class Evaluator:
                 stds = jax.tree.map(np.zeros_like, means)
             return means, stds, n
 
+        is_ip_ttt = self.config.model.ip_ttt
+
         for eval_name, ds in loader_dict.items():
             n_batches = min(max_batches, len(ds)) if max_batches is not None else len(ds)
             batch_loader = ds.to_iter_dataset().map(lambda batch: jax.tree.map(load_to_sharded_array, batch))
@@ -163,10 +179,13 @@ class Evaluator:
                 if is_meta:
                     result_no_ttt = eval_step_fn_no_ttt(model, batch, state)
                     results_no_ttt.append(result_no_ttt)
+                elif is_ip_ttt:
+                    result_no_ttt = eval_step_fn_no_ip_ttt(model, batch, state)
+                    results_no_ttt.append(result_no_ttt)
 
             eval_metrics[eval_name], eval_stds[eval_name], eval_counts[eval_name] = _aggregate(results)
 
-            if is_meta and results_no_ttt:
+            if (is_meta or is_ip_ttt) and results_no_ttt:
                 k = f"{eval_name}_no_ttt"
                 eval_metrics[k], eval_stds[k], eval_counts[k] = _aggregate(results_no_ttt)
 

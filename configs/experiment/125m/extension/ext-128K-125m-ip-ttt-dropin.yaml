@@ -1,0 +1,24 @@
+# @package _global_
+# Ablation of ext-128K-125m-ip-ttt: starts extension from the FA pretrain
+# checkpoint (pretrain-125m-fa) instead of the IP-TTT-equipped pretrain
+# checkpoint (pretrain-125m-ip-ttt). This matches the In-Place TTT
+# paper's headline drop-in / continual-pretraining setting: graft fresh,
+# zero-initialized TTT components onto an existing pretrained model.
+# At step 0, the TTT conv1d is zero and the projection is diagonal-only,
+# so the model is functionally identical to SWA. Removes the confound
+# between method (TTT update on/off) and starting checkpoint.
+defaults:
+  - 125m/extension/_base-ip-ttt
+  - _self_
+
+training:
+  exp_name: ext-128K-125m-ip-ttt-dropin
+  wandb_tags: [extension, ip-ttt, ablation, 128K, drop-in]
+  resume_exp_name: pretrain-125m-fa
+  seq_length: 131072
+  global_batch_size: 8
+  accum_steps: 8
+  eval_batch_size: 1
+
+model:
+  mini_batch_size: 131072

@@ -1,0 +1,17 @@
+# @package _global_
+defaults:
+  - 125m/extension/_base-ip-ttt
+  - _self_
+
+training:
+  exp_name: ext-64K-125m-ip-ttt-next-embedding
+  resume_exp_name: pretrain-125m-ip-ttt-next-embedding
+  wandb_tags: [extension, ip-ttt, treatment, next-embedding, 64K]
+  seq_length: 65536
+  global_batch_size: 16
+  accum_steps: 16
+  eval_batch_size: 2
+
+model:
+  ip_ttt_target: next_embedding
+  mini_batch_size: 65536

@@ -1,20 +1,18 @@
 # @package _global_
 defaults:
-  - override /training: 125m/pretrain-8K
+  - override /training: 125m/ext
   - override /model: 125m
+  - override /dataset: pg19
   - _self_
 
 training:
-  exp_name: pretrain-125m-fa
+  resume_exp_name: pretrain-125m-fa
   wandb_project: thesis-125m
-  wandb_tags: [pretrain, fa, baseline]
-  train_mode: pretrain
-  accum_steps: 4
+  load_part: params
+  num_evals: 2
 
 model:
   seq_modeling_block: self_attention
   force_flash: True
-  mini_batch_size: 8192
-  rope_theta: 500000
   remat_block: nothing_saveable
   remat_block_bwd: nothing_saveable

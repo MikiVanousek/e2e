@@ -1,0 +1,27 @@
+# @package _global_
+defaults:
+  - override /training: 14m/ext
+  - override /model: 14m
+  - override /dataset: pg19
+  - _self_
+
+training:
+  resume_exp_name: pretrain-14m-ip-ttt-v2
+  wandb_project: thesis-14m
+  load_part: params
+  num_evals: 2
+  train_mode: pretrain
+
+model:
+  seq_modeling_block: SWAFull
+  force_flash: True
+  sliding_window_size: 8192
+  rope_theta: 500000
+  remat_block: nothing_saveable
+  remat_block_bwd: nothing_saveable
+  intermediate_size: 832
+  ip_ttt: true
+  ip_ttt_layers: [5]
+  ip_ttt_chunk: 1024
+  ip_ttt_lr: 3.0
+  ip_ttt_proj: true

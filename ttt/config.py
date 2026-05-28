@@ -119,6 +119,13 @@ class ModelConfig:
     feed_forward_prime: str = "swiglu"  # Only "swiglu" is supported.
     prime_zero_init: bool = False
 
+    ip_ttt: bool = False
+    ip_ttt_layers: list[int] = field(default_factory=list)
+    ip_ttt_chunk: int = 4096
+    ip_ttt_lr: float = 3.0
+    ip_ttt_proj: bool = True
+    ip_ttt_target: str = "conv_current_layer"
+
 
 @dataclass(unsafe_hash=True, eq=True)
 class DatasetConfig:

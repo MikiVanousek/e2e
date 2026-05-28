@@ -6,13 +6,10 @@ defaults:
   - _self_
 
 training:
+  resume_exp_name: pretrain-14m-e2e
   wandb_project: thesis-14m
   load_part: params
-  seq_length: 32768
-  global_batch_size: 32
-  accum_steps: 2
   num_evals: 2
-
   train_mode: meta
   spec_inner: ["language_model.**.suffix_blocks.feed_forward_prime.**"]
   ilr_init: 1

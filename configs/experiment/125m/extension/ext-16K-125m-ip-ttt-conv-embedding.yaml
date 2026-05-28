@@ -1,0 +1,16 @@
+# @package _global_
+defaults:
+  - 125m/extension/_base-ip-ttt
+  - _self_
+
+training:
+  exp_name: ext-16K-125m-ip-ttt-conv-embedding
+  resume_exp_name: pretrain-125m-ip-ttt-conv-embedding
+  wandb_tags: [extension, ip-ttt, treatment, conv-embedding, 16K]
+  seq_length: 16384
+  global_batch_size: 64
+  accum_steps: 8
+
+model:
+  ip_ttt_target: conv_embedding
+  mini_batch_size: 16384

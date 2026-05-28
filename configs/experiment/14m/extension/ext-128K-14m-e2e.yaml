@@ -1,0 +1,11 @@
+# @package _global_
+defaults:
+  - 14m/extension/_base-e2e
+  - _self_
+
+training:
+  exp_name: ext-128K-14m-e2e
+  wandb_tags: [extension, e2e-scratch, baseline, 128K]
+  seq_length: 131072
+  global_batch_size: 8
+  eval_batch_size: 1
