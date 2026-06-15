@@ -20,8 +20,9 @@ from ttt.config import Config, register_configs
 from ttt.infra.checkpoint import Checkpointer, unify_dict_with_eqx_module
 from ttt.model.data import Batch
 from ttt.model.sharding import ModelSharding
-from ttt.model.transformer import MetaModel
-from ttt.utils.jax_utils import eval_shape_and_sharding, initialize_distibuted, set_random_seed
+from ttt.model.transformer import BlockCollectionSplit, MetaModel
+from ttt.utils.filter_utils import get_filter_spec
+from ttt.utils.jax_utils import clone_pytree, eval_shape_and_sharding, initialize_distibuted, scan_remat_chunk, set_random_seed, tree_rearrange
 
 register_configs()
 
@@ -160,6 +161,7 @@ def _load_model(cfg: Config) -> tuple[MetaModel, eqx.nn.State, jax.sharding.Mesh
         )
         model, state = create_sharded_model_and_state()
         model = unify_dict_with_eqx_module(out_state["model_weights"], model)[0]
+        state = state.set(model.step_index, jnp.array(jnp.iinfo(jnp.int32).max - 100, dtype=jnp.int32))
         checkpointer.close()
     return model, state, mesh
 
@@ -178,6 +180,190 @@ def _next_token(model: MetaModel, state: eqx.nn.State, input_ids: jax.Array, tok
     return jnp.argmax(logits).astype(jnp.int32)
 
 
+@eqx.filter_jit
+def _adapt_e2e_model(model: MetaModel, state: eqx.nn.State, input_ids: jax.Array, loss_token_count: jax.Array) -> MetaModel:
+    cfg = model.config
+    tokens_per_chunk = cfg.model.mini_batch_size
+
+    target_tokens = jnp.concatenate([input_ids[1:], input_ids[-1:]], axis=0)
+    loss_masks = jnp.arange(input_ids.shape[0]) < jnp.maximum(loss_token_count, 0)
+    seq = Batch(input_ids=input_ids, target_tokens=target_tokens, loss_masks=loss_masks)
+
+    block_collection = model.language_model.model.h.blocks
+    prime_storage = model.language_model.model.h.prime_storage
+    new_collection = BlockCollectionSplit(
+        cfg.model,
+        block_collection=block_collection,
+        prime_storage=prime_storage,
+        key=jax.random.PRNGKey(0),
+    )
+
+    state_prefix_suffix = state.substate(model.language_model.model.h.blocks)
+    state_prefix, state_suffix = BlockCollectionSplit.split_state(state_prefix_suffix, cfg.model.suffix_len)
+    state_all = clone_pytree(state)
+
+    model = eqx.tree_at(lambda m: m.language_model.model.h, model, new_collection)
+    model = jax.tree.map(lambda p: p.astype(model.state_dtype), model)
+    inner_opt_state = model.inner_optimizer(state_all).init(model.inner_parameters())
+
+    xt_embed = model.language_model.wte_call(seq.input_ids)
+    prefix_output = model.language_model.prefix_call(model.language_model.model.h.prefix_blocks, xt_embed, state_prefix, seq).last_hidden_state
+
+    def process_suffix_chunk(model__opt_state__state, inputs: tuple[Batch, jnp.ndarray]):
+        model_inner, inner_opt_state, state_tuple = model__opt_state__state
+        suffix_chunk, prefix_chunk = inputs
+
+        spec_inner = get_filter_spec(model_inner, cfg.training.spec_inner, "inner parameters")
+        inner_params, _ = eqx.partition(model_inner, spec_inner)
+        _, outer_params = eqx.partition(model, spec_inner)
+        model_inner = eqx.combine(inner_params, outer_params)
+
+        new_model, inner_opt_state, state_tuple, _metrics = MetaModel.inner_loop_step(
+            model_inner, inner_opt_state, state_tuple, suffix_chunk, prefix_chunk
+        )
+        return (new_model, inner_opt_state, state_tuple), None
+
+    seq = tree_rearrange(seq, "(chunk token) ... -> chunk token ...", token=tokens_per_chunk)
+    prefix_output = tree_rearrange(prefix_output, "(chunk token) ... -> chunk token ...", token=tokens_per_chunk)
+    (adapted_model, _inner_opt_state, _state_tuple), _ = scan_remat_chunk(
+        process_suffix_chunk,
+        (model, inner_opt_state, (state_all, state_suffix)),
+        (seq, prefix_output),
+        remat_n_loops=cfg.training.inner_remat_freq,
+        unroll=cfg.model.unroll_inner_scan,
+    )
+    return adapted_model
+
+
+@eqx.filter_jit
+def _next_token_e2e(model: MetaModel, state: eqx.nn.State, input_ids: jax.Array, token_index: jax.Array) -> jax.Array:
+    cfg = model.config
+    tokens_per_chunk = cfg.model.mini_batch_size
+
+    target_tokens = jnp.concatenate([input_ids[1:], input_ids[-1:]], axis=0)
+    seq = Batch(
+        input_ids=input_ids,
+        target_tokens=target_tokens,
+        loss_masks=jnp.ones(input_ids.shape, dtype=bool),
+    )
+
+    block_collection = model.language_model.model.h.blocks
+    prime_storage = model.language_model.model.h.prime_storage
+    new_collection = BlockCollectionSplit(
+        cfg.model,
+        block_collection=block_collection,
+        prime_storage=prime_storage,
+        key=jax.random.PRNGKey(0),
+    )
+
+    state_prefix_suffix = state.substate(model.language_model.model.h.blocks)
+    state_prefix, state_suffix = BlockCollectionSplit.split_state(state_prefix_suffix, cfg.model.suffix_len)
+    state_all = clone_pytree(state)
+
+    model = eqx.tree_at(lambda m: m.language_model.model.h, model, new_collection)
+    model = jax.tree.map(lambda p: p.astype(model.state_dtype), model)
+    inner_opt_state = model.inner_optimizer(state_all).init(model.inner_parameters())
+
+    xt_embed = model.language_model.wte_call(seq.input_ids)
+    prefix_output = model.language_model.prefix_call(model.language_model.model.h.prefix_blocks, xt_embed, state_prefix, seq).last_hidden_state
+
+    token_chunk = token_index // tokens_per_chunk
+    token_offset = token_index % tokens_per_chunk
+
+    seq = tree_rearrange(seq, "(chunk token) ... -> chunk token ...", token=tokens_per_chunk)
+    prefix_output = tree_rearrange(prefix_output, "(chunk token) ... -> chunk token ...", token=tokens_per_chunk)
+    chunk_ids = jnp.arange(seq.input_ids.shape[0], dtype=jnp.int32)
+
+    def process_suffix_chunk(model__opt_state__state, inputs: tuple[Batch, jnp.ndarray, jax.Array]):
+        model_inner, inner_opt_state, state_tuple = model__opt_state__state
+        suffix_chunk, prefix_chunk, chunk_id = inputs
+
+        spec_inner = get_filter_spec(model_inner, cfg.training.spec_inner, "inner parameters")
+        inner_params, _ = eqx.partition(model_inner, spec_inner)
+        _, outer_params = eqx.partition(model, spec_inner)
+        model_inner = eqx.combine(inner_params, outer_params)
+
+        state_all, suffix_state = state_tuple
+        lm_outputs = model_inner.language_model.suffix_call(prefix_chunk, suffix_state, suffix_chunk)
+        chunk_logits = lm_outputs.logits[token_offset]
+        selected_logits = jnp.where(chunk_id == token_chunk, chunk_logits, jnp.zeros_like(chunk_logits))
+
+        def update_after_chunk():
+            new_model, new_inner_opt_state, new_state_tuple, _metrics = MetaModel.inner_loop_step(
+                model_inner, inner_opt_state, state_tuple, suffix_chunk, prefix_chunk
+            )
+            return new_model, new_inner_opt_state, new_state_tuple
+
+        def carry_forward_without_update():
+            return model_inner, inner_opt_state, (state_all, lm_outputs.new_state)
+
+        new_carry = jax.lax.cond(chunk_id < token_chunk, update_after_chunk, carry_forward_without_update)
+        return new_carry, selected_logits
+
+    _carry, selected_logits = scan_remat_chunk(
+        process_suffix_chunk,
+        (model, inner_opt_state, (state_all, state_suffix)),
+        (seq, prefix_output, chunk_ids),
+        remat_n_loops=cfg.training.inner_remat_freq,
+        unroll=cfg.model.unroll_inner_scan,
+    )
+    logits = jnp.sum(selected_logits, axis=0)
+    return jnp.argmax(logits).astype(jnp.int32)
+
+
+@eqx.filter_jit
+def _next_token_e2e_no_ttt(model: MetaModel, state: eqx.nn.State, input_ids: jax.Array, token_index: jax.Array) -> jax.Array:
+    cfg = model.config
+    tokens_per_chunk = cfg.model.mini_batch_size
+
+    target_tokens = jnp.concatenate([input_ids[1:], input_ids[-1:]], axis=0)
+    seq = Batch(
+        input_ids=input_ids,
+        target_tokens=target_tokens,
+        loss_masks=jnp.ones(input_ids.shape, dtype=bool),
+    )
+
+    block_collection = model.language_model.model.h.blocks
+    prime_storage = model.language_model.model.h.prime_storage
+    new_collection = BlockCollectionSplit(
+        cfg.model,
+        block_collection=block_collection,
+        prime_storage=prime_storage,
+        key=jax.random.PRNGKey(0),
+    )
+
+    state_prefix_suffix = state.substate(model.language_model.model.h.blocks)
+    state_prefix, state_suffix = BlockCollectionSplit.split_state(state_prefix_suffix, cfg.model.suffix_len)
+    model = eqx.tree_at(lambda m: m.language_model.model.h, model, new_collection)
+
+    xt_embed = model.language_model.wte_call(seq.input_ids)
+    prefix_output = model.language_model.prefix_call(model.language_model.model.h.prefix_blocks, xt_embed, state_prefix, seq).last_hidden_state
+
+    token_chunk = token_index // tokens_per_chunk
+    token_offset = token_index % tokens_per_chunk
+
+    seq = tree_rearrange(seq, "(chunk token) ... -> chunk token ...", token=tokens_per_chunk)
+    prefix_output = tree_rearrange(prefix_output, "(chunk token) ... -> chunk token ...", token=tokens_per_chunk)
+    chunk_ids = jnp.arange(seq.input_ids.shape[0], dtype=jnp.int32)
+
+    def process_suffix_chunk(state_suffix, inputs: tuple[Batch, jnp.ndarray, jax.Array]):
+        suffix_chunk, prefix_chunk, chunk_id = inputs
+        lm_outputs = model.language_model.suffix_call(prefix_chunk, state_suffix, suffix_chunk)
+        chunk_logits = lm_outputs.logits[token_offset]
+        selected_logits = jnp.where(chunk_id == token_chunk, chunk_logits, jnp.zeros_like(chunk_logits))
+        return lm_outputs.new_state, selected_logits
+
+    _state_suffix, selected_logits = scan_remat_chunk(
+        process_suffix_chunk,
+        state_suffix,
+        (seq, prefix_output, chunk_ids),
+        remat_n_loops=cfg.training.inner_remat_freq,
+        unroll=cfg.model.unroll_inner_scan,
+    )
+    logits = jnp.sum(selected_logits, axis=0)
+    return jnp.argmax(logits).astype(jnp.int32)
+
+
 def _generate_greedy(
     model: MetaModel,
     state: eqx.nn.State,
@@ -187,6 +373,7 @@ def _generate_greedy(
     max_seq_length: int,
     tokens_to_generate: int,
     eos_token_id: int | None,
+    e2e_ttt_off: bool,
 ) -> str:
     prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
     max_prompt_len = max_seq_length - tokens_to_generate
@@ -199,7 +386,11 @@ def _generate_greedy(
     cur_len = len(prompt_ids)
 
     for _ in range(tokens_to_generate):
-        token = int(jax.device_get(_next_token(model, state, token_buffer, jnp.asarray(cur_len - 1, dtype=jnp.int32))))
+        if model.config.training.train_mode == "meta":
+            next_token_fn = _next_token_e2e_no_ttt if e2e_ttt_off else _next_token_e2e
+        else:
+            next_token_fn = _next_token
+        token = int(jax.device_get(next_token_fn(model, state, token_buffer, jnp.asarray(cur_len - 1, dtype=jnp.int32))))
         if eos_token_id is not None and token == eos_token_id:
             break
         generated.append(token)
@@ -279,6 +470,7 @@ def _predict_task(
             max_seq_length=args.max_seq_length,
             tokens_to_generate=tokens_to_generate,
             eos_token_id=tokenizer.eos_token_id,
+            e2e_ttt_off=args.e2e_ttt_off,
         )
         outputs.append(
             {
@@ -315,6 +507,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-seq-length", type=int, default=131072)
     parser.add_argument("--tokenizer-name", default="meta-llama/Llama-3.1-8B")
     parser.add_argument("--tokens-to-generate-limit", type=int)
+    parser.add_argument("--e2e-ttt-off", action="store_true")
     parser.add_argument("--num-devices", type=int, default=1)
     parser.add_argument("--jax-cache-dir", default="/tmp/jax_cache")
     parser.add_argument("--download-aux-data", action=argparse.BooleanOptionalAction, default=True)

@@ -44,10 +44,11 @@ def _prepare_data_parallelism(cfg: Config, global_dev_num: int) -> int:
 def _make_train_iterator(cfg: Config, model_cfg, data_sharding: jax.sharding.Sharding, n_data_parallel: int):
     train_ds = (
         lm_dataset(
+            dataset_kind=cfg.dataset.kind,
             hf_dataset=cfg.dataset.hf_dataset,
             hf_subset=cfg.dataset.hf_subset,
             hf_text_column=cfg.dataset.hf_text_column,
-            split=cfg.training.data_split,
+            split=cfg.training.source_split,
             seq_len=cfg.training.seq_length,
             seed=cfg.training.data_seed,
             global_batch_size=cfg.training.global_batch_size,
@@ -56,9 +57,19 @@ def _make_train_iterator(cfg: Config, model_cfg, data_sharding: jax.sharding.Sha
             eos_token_id=model_cfg.eos_token_id,
             tokenizer_name=cfg.training.tokenizer_name,
             vocab_size=model_cfg.vocab_size,
+            min_seq_len=cfg.training.data_min_seq_length,
             cache_dir=cfg.dataset.hf_cache_dir,
             total_steps=cfg.training.total_steps,
             shuffle=cfg.training.shuffle_train,
+            data_partition="train",
+            source_seq_len=cfg.training.source_seq_length,
+            eval_fraction=cfg.training.eval_fraction,
+            synthetic_num_pairs=cfg.dataset.synthetic_num_pairs,
+            synthetic_num_docs=cfg.dataset.synthetic_num_docs,
+            synthetic_seed=cfg.dataset.synthetic_seed,
+            nca_patch_size=cfg.dataset.nca_patch_size,
+            nca_num_colors=cfg.dataset.nca_num_colors,
+            nca_mask_delimiters=cfg.dataset.nca_mask_delimiters,
         )
         if not cfg.training.dummy_dataset
         else dummy_dataset(
@@ -242,13 +253,23 @@ def _main(cfg: Config) -> None:
     master_log(logger, f"Total steps: {total_steps}")
 
     num_evals = min(cfg.training.num_evals, total_steps)
-    if num_evals == 1:
+    if num_evals == 0:
+        eval_steps = set()
+        checkpoint_steps = {total_steps - 1}
+        max_eval_batches = 0
+        master_log(logger, f"Eval disabled; saving checkpoint at steps: {sorted(checkpoint_steps)}")
+    elif num_evals == 1:
         eval_steps = {total_steps - 1}
+        checkpoint_steps = eval_steps
+        eval_dataset_len = len(evaluator.train_holdout_loader)
+        max_eval_batches = min(cfg.training.max_eval_batches, max(1, -(-eval_dataset_len // num_evals)))
+        master_log(logger, f"Eval at steps: {sorted(eval_steps)} ({max_eval_batches} batches each, {eval_dataset_len} total)")
     else:
         eval_steps = {(total_steps - 1) * i // (num_evals - 1) for i in range(num_evals)}
-    eval_dataset_len = len(evaluator.train_holdout_loader)
-    max_eval_batches = min(cfg.training.max_eval_batches, max(1, -(-eval_dataset_len // num_evals)))
-    master_log(logger, f"Eval at steps: {sorted(eval_steps)} ({max_eval_batches} batches each, {eval_dataset_len} total)")
+        checkpoint_steps = eval_steps
+        eval_dataset_len = len(evaluator.train_holdout_loader)
+        max_eval_batches = min(cfg.training.max_eval_batches, max(1, -(-eval_dataset_len // num_evals)))
+        master_log(logger, f"Eval at steps: {sorted(eval_steps)} ({max_eval_batches} batches each, {eval_dataset_len} total)")
 
     with mesh:
         if cfg.training.eval_mode or start_step == total_steps:
@@ -280,7 +301,7 @@ def _main(cfg: Config) -> None:
 
             wandb_logger.log(update, step)
 
-            if step in eval_steps:
+            if step in checkpoint_steps:
                 master_log(logger, f"Saving checkpoint at step {step}, do not kill...")
                 checkpointer.save_checkpoint(
                     step=step,
@@ -320,22 +341,57 @@ def main(cfg: Config):
 
 @hydra.main(version_base=None, config_path=str(Path("configs").absolute().resolve()), config_name="config")
 def preprocess_main(cfg: Config):
+    if cfg.dataset.kind in {"synthetic_kv", "nca_hf_raw"}:
+        print(f"{cfg.dataset.kind} dataset does not need HF text preprocessing.")
+        return
+
     from ttt.dataloader.lm_dataset import HFTokenizedDataset
 
     num_proc = os.cpu_count() or 4
     print(f"Preprocessing dataset with {num_proc} workers")
-    HFTokenizedDataset(
-        hf_dataset=cfg.dataset.hf_dataset,
-        hf_subset=cfg.dataset.hf_subset,
-        hf_text_column=cfg.dataset.hf_text_column,
-        split=cfg.training.data_split,
-        seq_len=cfg.training.seq_length,
-        tokenizer_name=cfg.training.tokenizer_name,
-        vocab_size=cfg.model.vocab_size,
-        cache_dir=cfg.dataset.hf_cache_dir,
-        num_proc=num_proc,
+
+    def preprocess_split(name: str, split: str, min_seq_len: int, data_partition: str) -> int:
+        source_seq_len = cfg.training.source_seq_length if cfg.training.source_seq_length > 0 else max(cfg.training.seq_length, min_seq_len)
+        print(
+            f"Preprocessing {name} source_split={split!r} "
+            f"source_seq_len={source_seq_len:,} data_partition={data_partition!r}"
+        )
+        ds = HFTokenizedDataset(
+            hf_dataset=cfg.dataset.hf_dataset,
+            hf_subset=cfg.dataset.hf_subset,
+            hf_text_column=cfg.dataset.hf_text_column,
+            split=split,
+            seq_len=cfg.training.seq_length,
+            tokenizer_name=cfg.training.tokenizer_name,
+            vocab_size=cfg.model.vocab_size,
+            min_seq_len=min_seq_len,
+            cache_dir=cfg.dataset.hf_cache_dir,
+            num_proc=num_proc,
+            data_partition=data_partition,
+            source_seq_len=cfg.training.source_seq_length,
+            eval_fraction=cfg.training.eval_fraction,
+        )
+        print(f"{name}: {len(ds):,} chunks")
+        return len(ds)
+
+    train_len = preprocess_split("train", cfg.training.source_split, cfg.training.data_min_seq_length, "train")
+    eval_len = preprocess_split("eval", cfg.training.source_split, cfg.training.eval_min_seq_length, "eval")
+
+    steps_per_epoch = train_len // cfg.training.global_batch_size
+    if steps_per_epoch <= 0:
+        raise ValueError(f"Not enough training documents ({train_len:,}) for global_batch_size={cfg.training.global_batch_size}")
+    epochs = cfg.training.total_steps / steps_per_epoch
+    if epochs > 5:
+        raise ValueError(f"Not enough training documents ({train_len:,}): {epochs:.2f} epochs > 5")
+
+    eval_batches = eval_len // cfg.training.eval_batch_size
+    if eval_batches <= 0:
+        raise ValueError(f"Not enough eval documents ({eval_len:,}) for eval_batch_size={cfg.training.eval_batch_size}")
+
+    print(
+        "Done. Dataset is cached for future runs. "
+        f"train_steps_per_epoch={steps_per_epoch:,}, train_epochs={epochs:.2f}, eval_batches={eval_batches:,}."
     )
-    print("Done. Dataset is cached for future runs.")
 
 
 if __name__ == "__main__":

@@ -127,6 +127,8 @@ def ruler(
     num_samples: int = 1,
     max_seq_length: int = 131072,
     tokens_to_generate_limit: int = 0,
+    output_root: str = "/ruler/results",
+    e2e_ttt_off: bool = False,
     tokenizer_name: str = "meta-llama/Llama-3.1-8B",
     download_aux_data: bool = False,
     wandb_entity: str = "miki-aisle",
@@ -147,7 +149,7 @@ def ruler(
         "--experiment", experiment,
         "--checkpoint-exp-name", exp_name,
         "--checkpoint-path", "/checkpoints",
-        "--output-root", "/ruler/results",
+        "--output-root", output_root,
         "--ruler-dir", "/ruler/NVIDIA_RULER",
         "--tasks", tasks,
         "--num-samples", str(num_samples),
@@ -161,6 +163,8 @@ def ruler(
     ]
     if tokens_to_generate_limit > 0:
         cmd.extend(["--tokens-to-generate-limit", str(tokens_to_generate_limit)])
+    if e2e_ttt_off:
+        cmd.append("--e2e-ttt-off")
     if not download_aux_data:
         cmd.append("--no-download-aux-data")
 
@@ -177,7 +181,7 @@ def ruler(
     cpu=32,
     memory=32768,
 )
-def preprocess_dataset(experiment: str):
+def preprocess_dataset(experiment: str, extra_args: str = ""):
     """Download, tokenize, and filter dataset (CPU only, no GPU)."""
     hf_cache_volume.reload()
     cmd = [
@@ -186,8 +190,31 @@ def preprocess_dataset(experiment: str):
         f"+experiment={experiment}",
         "dataset.hf_cache_dir=/data",
     ]
+    if extra_args:
+        cmd.extend(shlex.split(extra_args))
     subprocess.run(cmd, check=True, cwd="/app", env=os.environ.copy())
     hf_cache_volume.commit()
+
+
+@app.local_entrypoint()
+def preprocess_main(
+    experiment: str = "125m/extension/ext-16K-125m-ip-ttt-next-current-layer",
+    extra_args: str = "",
+    wait: bool = True,
+):
+    """Preprocess one or more comma-separated experiments on CPU."""
+    handles = [
+        preprocess_dataset.spawn(
+            experiment=exp.strip(),
+            extra_args=extra_args,
+        )
+        for exp in experiment.split(",")
+    ]
+    if not wait:
+        print(f"Spawned {len(handles)} preprocessing job(s).")
+        return
+    for h in handles:
+        h.get()
 
 
 @app.local_entrypoint()

@@ -10,6 +10,9 @@ training:
   wandb_project: thesis-125m
   load_part: params
   num_evals: 2
+  source_seq_length: 131072
+  source_split: train
+  eval_fraction: 0.05
 
 model:
   seq_modeling_block: SWAFull

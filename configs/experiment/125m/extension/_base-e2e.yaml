@@ -11,6 +11,9 @@ training:
   load_part: params
   num_evals: 2
   train_mode: meta
+  source_seq_length: 131072
+  source_split: train
+  eval_fraction: 0.05
   spec_inner: ["language_model.**.suffix_blocks.feed_forward_prime.**"]
   ilr_init: 1
   optimizer_inner:

@@ -89,11 +89,12 @@ class Evaluator:
     ):
         self.train_holdout_loader = (
             lm_dataset(
+                dataset_kind=config.dataset.kind,
                 hf_dataset=config.dataset.hf_dataset,
                 hf_subset=config.dataset.hf_subset,
                 hf_text_column=config.dataset.hf_text_column,
                 seq_len=config.training.seq_length,
-                split=config.training.eval_split,
+                split=config.training.source_split,
                 global_batch_size=global_batch_size,
                 seed=0,
                 repeat=False,
@@ -102,7 +103,17 @@ class Evaluator:
                 eos_token_id=config.model.eos_token_id,
                 tokenizer_name=config.training.tokenizer_name,
                 vocab_size=config.model.vocab_size,
+                min_seq_len=config.training.eval_min_seq_length,
                 cache_dir=config.dataset.hf_cache_dir,
+                data_partition="eval",
+                source_seq_len=config.training.source_seq_length,
+                eval_fraction=config.training.eval_fraction,
+                synthetic_num_pairs=config.dataset.synthetic_num_pairs,
+                synthetic_num_docs=config.dataset.synthetic_num_docs,
+                synthetic_seed=config.dataset.synthetic_seed,
+                nca_patch_size=config.dataset.nca_patch_size,
+                nca_num_colors=config.dataset.nca_num_colors,
+                nca_mask_delimiters=config.dataset.nca_mask_delimiters,
             )
             if not config.training.dummy_dataset
             else dummy_dataset(
@@ -121,6 +132,10 @@ class Evaluator:
         self.bytes_per_token = self._compute_bytes_per_token()
 
     def _compute_bytes_per_token(self) -> float:
+        if self.config.dataset.kind in {"synthetic_kv", "nca_hf_raw"}:
+            master_log(logger, f"Using bytes_per_token=1.00 for {self.config.dataset.kind} tokens")
+            return 1.0
+
         from transformers import AutoTokenizer
         tokenizer = AutoTokenizer.from_pretrained(self.config.training.tokenizer_name)
         total_bytes = 0

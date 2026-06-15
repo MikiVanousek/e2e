@@ -129,10 +129,17 @@ class ModelConfig:
 
 @dataclass(unsafe_hash=True, eq=True)
 class DatasetConfig:
+    kind: str = "hf"
     hf_dataset: str = "HuggingFaceFW/fineweb-edu"
     hf_subset: str = "sample-10BT"
     hf_text_column: str = "text"
     hf_cache_dir: str = ""
+    synthetic_num_pairs: int = 32768
+    synthetic_num_docs: int = 8192
+    synthetic_seed: int = 0
+    nca_patch_size: int = 2
+    nca_num_colors: int = 10
+    nca_mask_delimiters: bool = True
 
 
 @dataclass(unsafe_hash=True, eq=True)
@@ -176,6 +183,11 @@ class TrainingConfig:
     train_mode: TrainMode = "pretrain"
     data_split: str = "train[5%:]"
     eval_split: str = "train[:5%]"
+    data_min_seq_length: int = 131072
+    eval_min_seq_length: int = 131072
+    source_seq_length: int = 0
+    source_split: str = "train"
+    eval_fraction: float = 0.05
     inner_remat_freq: int = 1
     optimizer_outer: OptimizerConfig = field(default_factory=AdamWOptimizerConfig)
     optimizer_inner: OptimizerConfig | None = field(default_factory=SGDOptimizerConfig)
