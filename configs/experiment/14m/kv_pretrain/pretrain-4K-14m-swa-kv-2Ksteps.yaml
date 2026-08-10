@@ -1,0 +1,11 @@
+# @package _global_
+defaults:
+  - 14m/kv_pretrain/_base-swa
+  - _self_
+
+training:
+  exp_name: pretrain-4K-14m-swa-kv-2Ksteps
+  wandb_tags: [pretrain, kv, scratch, swa, 4K, steps-2K]
+  seq_length: 4096
+  global_batch_size: 256
+  accum_steps: 8

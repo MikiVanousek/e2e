@@ -1,0 +1,35 @@
+# @package _global_
+defaults:
+  - override /training: 14m/pretrain-8K
+  - override /model: 14m
+  - override /dataset: synthetic_kv
+  - _self_
+
+dataset:
+  synthetic_num_pairs: 4095
+
+training:
+  exp_name: ext-32K-14m-fa-kv-token-250M
+  resume_exp_name: pretrain-14m-fa
+  wandb_project: thesis-14m
+  wandb_tags: [extension, fa, baseline, kv, 32K, token-budget, 250M]
+  load_part: params
+  train_mode: pretrain
+  seq_length: 32768
+  global_batch_size: 32
+  accum_steps: 8
+  total_steps: 120
+  num_evals: 1
+
+  optimizer_outer:
+    lr_decay_steps: 120
+    lr_warmup_steps: 12
+
+model:
+  seq_modeling_block: self_attention
+  force_flash: True
+  mini_batch_size: 8192
+  rope_theta: 500000
+  remat_block: nothing_saveable
+  remat_block_bwd: nothing_saveable
+  intermediate_size: 832

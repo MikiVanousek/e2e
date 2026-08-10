@@ -1,0 +1,28 @@
+# Chinchilla recipe: 20 tokens/param -> 200M * 20 = 4B tokens
+# total_steps = 4B / (global_batch_size * seq_length) = 4B / 524,288 ~= 7630
+defaults:
+  - /training/base_training@_global_.training
+
+dataset_name: fineweb_edu_8k
+data_split: "train[5%:]"
+eval_split: "train[:5%]"
+
+total_steps: 7630
+seq_length: 8192
+global_batch_size: 64
+accum_steps: 2
+ilr_warmup_steps: 763
+num_evals: 1
+max_eval_batches: -1
+
+optimizer_outer:
+  optimizer_type: adamw
+  b1: 0.9
+  b2: 0.95
+  clip_gradient: 1.0
+  end_lr: 1e-05
+  init_lr: 0.0
+  lr: 2e-03
+  lr_decay_steps: 7630
+  lr_warmup_steps: 763
+  weight_decay: 0.1

@@ -41,6 +41,41 @@ def _prepare_data_parallelism(cfg: Config, global_dev_num: int) -> int:
     return cfg.training.n_data_parallel
 
 
+def _evenly_spaced_training_steps(total_steps: int, count: int) -> set[int]:
+    count = min(count, total_steps)
+    return {max(0, ((i + 1) * total_steps) // count - 1) for i in range(count)}
+
+
+def _checkpoint_steps(cfg: Config, total_steps: int, eval_steps: set[int]) -> set[int]:
+    assert cfg.training.num_checkpoints >= 0, "num_checkpoints must be non-negative"
+    assert cfg.training.checkpoint_interval_steps >= 0, "checkpoint_interval_steps must be non-negative"
+
+    checkpoint_steps = set(eval_steps)
+    if cfg.training.num_checkpoints > 0:
+        checkpoint_steps.update(_evenly_spaced_training_steps(total_steps, cfg.training.num_checkpoints))
+    if cfg.training.checkpoint_interval_steps > 0:
+        checkpoint_steps.update(range(cfg.training.checkpoint_interval_steps - 1, total_steps, cfg.training.checkpoint_interval_steps))
+        checkpoint_steps.add(total_steps - 1)
+    if not checkpoint_steps:
+        checkpoint_steps.add(total_steps - 1)
+    return checkpoint_steps
+
+
+def _validate_swa_chunking(cfg: Config) -> None:
+    if cfg.training.train_mode != "pretrain" or cfg.model.seq_modeling_block != "SWA":
+        return
+
+    min_chunk = min(cfg.training.seq_length, 2 * cfg.model.sliding_window_size)
+    if cfg.model.mini_batch_size < min_chunk:
+        raise ValueError(
+            "Pretrain-mode SWA needs model.mini_batch_size >= "
+            f"min(seq_length, 2 * sliding_window_size) = {min_chunk}; "
+            f"got mini_batch_size={cfg.model.mini_batch_size}, "
+            f"seq_length={cfg.training.seq_length}, "
+            f"sliding_window_size={cfg.model.sliding_window_size}."
+        )
+
+
 def _make_train_iterator(cfg: Config, model_cfg, data_sharding: jax.sharding.Sharding, n_data_parallel: int):
     train_ds = (
         lm_dataset(
@@ -145,8 +180,12 @@ def _main(cfg: Config) -> None:
     mesh = model_sharding.mesh
     data_sharding = jax.NamedSharding(mesh, P("data"))
     cfg.model.seq_len = cfg.training.seq_length
+    _validate_swa_chunking(cfg)
 
-    train_ds_iter, to_sharded_batch = _make_train_iterator(cfg, model_cfg, data_sharding, n_data_parallel)
+    if cfg.training.eval_mode:
+        train_ds_iter = None
+    else:
+        train_ds_iter, _to_sharded_batch = _make_train_iterator(cfg, model_cfg, data_sharding, n_data_parallel)
 
     @eqx.filter_jit
     def create_sharded_model_and_state() -> tuple[MetaModel, eqx.nn.State]:
@@ -166,8 +205,8 @@ def _main(cfg: Config) -> None:
         # Should be sharded the same way as the model parameters
         return opt_state
 
-    continued_run = False
     hf_resume = cfg.training.resume_exp_name.startswith("hf://")
+    continued_run = (not hf_resume) and cfg.training.load_part == "none" and checkpointer.checkpoint_exists()
 
     if hf_resume:
         repo_id = cfg.training.resume_exp_name[len("hf://"):]
@@ -177,10 +216,11 @@ def _main(cfg: Config) -> None:
         opt_state = optimizer_outer_loop.init(model.trainable_parameters())
         start_step = 0
 
-    elif (continued_run and checkpointer.checkpoint_exists()) or cfg.training.load_part != "none":
-        if continued_run and checkpointer.checkpoint_exists():
+    elif continued_run or cfg.training.load_part != "none":
+        if continued_run:
             load_part = "all"  # Resuming from the current checkpointing directory requires the optimizer and loop state
             load_checkpointer = checkpointer
+            master_log(logger, "Auto-resuming from latest checkpoint in current experiment directory")
         else:
             assert cfg.checkpoint.resume_checkpoint_dir is not None
             load_part = cfg.training.load_part
@@ -192,11 +232,15 @@ def _main(cfg: Config) -> None:
             load_part = "params"
 
         abstract_model_weights = eval_shape_and_sharding(lambda: create_sharded_model_and_state()[0].weights())
-        abstract_opt_state = eval_shape_and_sharding(lambda: create_stepped_opt_state(create_sharded_model_and_state()[0]))
+        targets = {"model_weights": abstract_model_weights}
+        if load_part == "all":
+            abstract_opt_state = eval_shape_and_sharding(lambda: create_stepped_opt_state(create_sharded_model_and_state()[0]))
+            targets["opt_state"] = abstract_opt_state
+            targets["train_ds_iter"] = train_ds_iter
 
         out_state = load_checkpointer.load_checkpoint(
             step=cfg.training.resume_step,
-            targets={"model_weights": abstract_model_weights, "opt_state": abstract_opt_state, "train_ds_iter": train_ds_iter},
+            targets=targets,
             restore=load_part,
         )
 
@@ -255,26 +299,34 @@ def _main(cfg: Config) -> None:
     num_evals = min(cfg.training.num_evals, total_steps)
     if num_evals == 0:
         eval_steps = set()
-        checkpoint_steps = {total_steps - 1}
         max_eval_batches = 0
-        master_log(logger, f"Eval disabled; saving checkpoint at steps: {sorted(checkpoint_steps)}")
+        master_log(logger, "Eval disabled")
     elif num_evals == 1:
         eval_steps = {total_steps - 1}
-        checkpoint_steps = eval_steps
         eval_dataset_len = len(evaluator.train_holdout_loader)
-        max_eval_batches = min(cfg.training.max_eval_batches, max(1, -(-eval_dataset_len // num_evals)))
+        max_eval_batches = (
+            eval_dataset_len
+            if cfg.training.max_eval_batches <= 0
+            else min(cfg.training.max_eval_batches, max(1, -(-eval_dataset_len // num_evals)))
+        )
         master_log(logger, f"Eval at steps: {sorted(eval_steps)} ({max_eval_batches} batches each, {eval_dataset_len} total)")
     else:
         eval_steps = {(total_steps - 1) * i // (num_evals - 1) for i in range(num_evals)}
-        checkpoint_steps = eval_steps
         eval_dataset_len = len(evaluator.train_holdout_loader)
-        max_eval_batches = min(cfg.training.max_eval_batches, max(1, -(-eval_dataset_len // num_evals)))
+        max_eval_batches = (
+            eval_dataset_len
+            if cfg.training.max_eval_batches <= 0
+            else min(cfg.training.max_eval_batches, max(1, -(-eval_dataset_len // num_evals)))
+        )
         master_log(logger, f"Eval at steps: {sorted(eval_steps)} ({max_eval_batches} batches each, {eval_dataset_len} total)")
+    checkpoint_steps = _checkpoint_steps(cfg, total_steps, eval_steps)
+    master_log(logger, f"Checkpoint saves at steps: {sorted(checkpoint_steps)}")
 
     with mesh:
         if cfg.training.eval_mode or start_step == total_steps:
+            eval_step = cfg.training.resume_step if cfg.training.eval_mode and cfg.training.resume_step is not None else start_step
             state = state.set(model.step_index, jnp.array(jnp.iinfo(jnp.int32).max - 100, dtype=jnp.int32))
-            evaluator.eval_fn(model, state, start_step)
+            evaluator.eval_fn(model, state, eval_step)
             jax.experimental.multihost_utils.sync_global_devices("eval finished")
             return
 
@@ -284,7 +336,7 @@ def _main(cfg: Config) -> None:
                 jax.experimental.multihost_utils.sync_global_devices("reached break step")
                 break
 
-            batch = to_sharded_batch(next(train_ds_iter))
+            batch = _to_sharded_batch(next(train_ds_iter))
 
             state = state.set(model.step_index, jnp.array(step, dtype=jnp.int32))
             model, opt_state, loss, metrics = train_on_sequence(state, model, opt_state, batch, cfg)

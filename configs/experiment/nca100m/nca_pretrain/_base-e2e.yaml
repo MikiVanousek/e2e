@@ -1,0 +1,24 @@
+# @package _global_
+defaults:
+  - /experiment/nca100m/nca_pretrain/_base-fa
+  - _self_
+
+training:
+  train_mode: meta
+  accum_steps: 8
+  spec_inner: ["language_model.**.suffix_blocks.feed_forward_prime.**"]
+  ilr_init: 1
+  optimizer_inner:
+    optimizer_type: sgd
+    lr: 1
+    clip_gradient: 1.0
+
+model:
+  seq_modeling_block: SWA
+  force_flash: False
+  unroll_block_scan: True
+  mini_batch_size: 1024
+  sliding_window_size: 8192
+  prime: True
+  prime_zero_init: True
+  suffix_len: 1

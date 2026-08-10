@@ -1,0 +1,22 @@
+# @package _global_
+defaults:
+  - 125m/extension/_base-ip-ttt
+  - override /dataset: synthetic_kv
+  - _self_
+
+training:
+  exp_name: ext-64K-125m-ip-ttt-kv-token-250M
+  wandb_tags: [extension, ip-ttt, treatment, kv, 64K, token-budget, 250M]
+  seq_length: 65536
+  global_batch_size: 16
+  accum_steps: 16
+  eval_batch_size: 2
+  total_steps: 120
+  num_evals: 1
+
+  optimizer_outer:
+    lr_decay_steps: 120
+    lr_warmup_steps: 12
+
+model:
+  mini_batch_size: 65536

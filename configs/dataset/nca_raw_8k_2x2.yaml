@@ -1,0 +1,10 @@
+defaults:
+  - /dataset/base_dataset@_here_
+
+kind: nca_hf_raw
+hf_dataset: MikiV/nca-raw-8k-2x2-gzip30-50
+hf_subset: ""
+hf_text_column: rollout
+nca_patch_size: 2
+nca_num_colors: 10
+nca_mask_delimiters: true

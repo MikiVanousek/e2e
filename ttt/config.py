@@ -84,6 +84,7 @@ class ModelConfig:
     mini_batch_size: int = 1024
     sliding_window_size: int = 1024
     seq_len: int = 131072
+    prime_intermediate_size: int | None = None
     rms_norm_eps: float = 1e-6
     initializer_range: float = 0.02
     bos_token_id: int = 1
@@ -124,7 +125,7 @@ class ModelConfig:
     ip_ttt_chunk: int = 4096
     ip_ttt_lr: float = 3.0
     ip_ttt_proj: bool = True
-    ip_ttt_target: str = "conv_current_layer"
+    ip_ttt_target: str = "conv_embedding"
 
 
 @dataclass(unsafe_hash=True, eq=True)
@@ -199,8 +200,11 @@ class TrainingConfig:
     ilr_warmup_steps: int = 0
     ilr_init: float = 1.0
     eval_batch_size: int = 8
+    save_document_metrics: bool = False
     max_eval_batches: int = 150
     num_evals: int = 6
+    num_checkpoints: int = 0
+    checkpoint_interval_steps: int = 0
     skip_tokens: int = 0
     chunks_dir: str = ""
     preprocess_chunk_idx: int = -1

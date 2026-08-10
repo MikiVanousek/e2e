@@ -1,0 +1,15 @@
+defaults:
+  - base_model
+
+name: 200m
+vocab_size: 32000
+output_size: 32000
+bos_token_id: 1
+eos_token_id: 2
+num_hidden_layers: 13
+hidden_size: 1024
+num_attention_heads: 16
+intermediate_size: 2816
+initializer_range: 0.02
+rms_norm_eps: 1e-6
+tie_word_embeddings: True

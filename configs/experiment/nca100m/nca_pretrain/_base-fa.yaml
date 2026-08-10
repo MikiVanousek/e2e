@@ -1,0 +1,24 @@
+# @package _global_
+defaults:
+  - override /training: nca100m/pretrain-8K
+  - override /model: nca100m
+  - _self_
+
+training:
+  wandb_project: thesis-nca100m-pretrain
+  exp_folder: nca100m-pretrain
+  load_part: none
+  resume_exp_name: ""
+  train_mode: pretrain
+  source_split: train
+  eval_fraction: 0.05
+
+model:
+  seq_modeling_block: self_attention
+  force_flash: True
+  mini_batch_size: 8192
+  rope_theta: 500000
+  remat_block: nothing_saveable
+  remat_block_bwd: nothing_saveable
+  remat_mlp: nothing_saveable
+  remat_mlp_bwd: nothing_saveable

@@ -1,0 +1,15 @@
+# @package _global_
+defaults:
+  - /experiment/nca100m/nca_pretrain/_base-fa
+  - _self_
+
+training:
+  accum_steps: 4
+
+model:
+  ip_ttt: true
+  ip_ttt_layers: [5, 11]
+  ip_ttt_chunk: 1024
+  ip_ttt_lr: 3.0
+  ip_ttt_proj: true
+  ip_ttt_target: conv_current_layer

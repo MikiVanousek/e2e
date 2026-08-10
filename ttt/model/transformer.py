@@ -50,6 +50,7 @@ class SwiGLUMLP(eqx.Module):
     config: ModelConfig = eqx.field(static=True, repr=False)
     compute_dtype: jnp.dtype = eqx.field(static=True)
     param_dtype: jnp.dtype = eqx.field(static=True)
+    intermediate_size: int = eqx.field(static=True)
     w1: NormalLinear
     w2: NormalLinear
     w3: NormalLinear
@@ -60,23 +61,25 @@ class SwiGLUMLP(eqx.Module):
         config: ModelConfig,
         *,
         key: PRNGKeyArray,
+        intermediate_size: int | None = None,
     ):
         self.config = config
         self.compute_dtype = get_float_dtype_by_name(self.config.compute_dtype)
         self.param_dtype = get_float_dtype_by_name(self.config.param_dtype)
+        self.intermediate_size = intermediate_size or config.intermediate_size
 
         w1_key, w2_key, w3_key = jrandom.split(key, 3)
 
         self.w1 = NormalLinear(
-            self.config, in_features=config.hidden_size, out_features=config.intermediate_size, std=config.initializer_range, key=w1_key, name="w1"
+            self.config, in_features=config.hidden_size, out_features=self.intermediate_size, std=config.initializer_range, key=w1_key, name="w1"
         )
 
         self.w2 = NormalLinear(
-            self.config, in_features=config.intermediate_size, out_features=config.hidden_size, std=config.initializer_range, key=w2_key, name="w2"
+            self.config, in_features=self.intermediate_size, out_features=config.hidden_size, std=config.initializer_range, key=w2_key, name="w2"
         )
 
         self.w3 = NormalLinear(
-            self.config, in_features=config.hidden_size, out_features=config.intermediate_size, std=config.initializer_range, key=w3_key, name="w3"
+            self.config, in_features=config.hidden_size, out_features=self.intermediate_size, std=config.initializer_range, key=w3_key, name="w3"
         )
 
         self.dropout = nn.Dropout(p=self.config.resid_pdrop)
@@ -257,7 +260,8 @@ class PrimeStorage(eqx.Module):
         if config.feed_forward_prime != "swiglu":
             raise NotImplementedError("Only feed_forward_prime='swiglu' is supported.")
 
-        self.feed_forward_prime = jax.vmap(lambda k: SwiGLUMLP(config, key=k))(suffix_keys)
+        prime_intermediate_size = config.prime_intermediate_size or config.intermediate_size
+        self.feed_forward_prime = jax.vmap(lambda k: SwiGLUMLP(config, key=k, intermediate_size=prime_intermediate_size))(suffix_keys)
         if config.prime_zero_init:
             zero_w2 = jnp.zeros_like(self.feed_forward_prime.w2.weight)
             self.feed_forward_prime = eqx.tree_at(lambda m: m.w2.weight, self.feed_forward_prime, zero_w2)

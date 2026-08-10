@@ -1,0 +1,22 @@
+# @package _global_
+defaults:
+  - 125m/extension/_base-ip-ttt
+  - _self_
+
+training:
+  exp_name: ext-32K-125m-ip-ttt-conv-embedding-token-1B
+  resume_exp_name: ext-32K-125m-ip-ttt-conv-embedding
+  wandb_tags: [extension, ip-ttt, treatment, conv-embedding, 32K, token-budget, 1B]
+  seq_length: 32768
+  global_batch_size: 32
+  accum_steps: 8
+  total_steps: 840
+  num_evals: 1
+
+  optimizer_outer:
+    lr_decay_steps: 840
+    lr_warmup_steps: 84
+
+model:
+  ip_ttt_target: conv_embedding
+  mini_batch_size: 32768

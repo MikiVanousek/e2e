@@ -1,0 +1,47 @@
+# @package _global_
+defaults:
+  - override /training: 14m/pretrain-8K
+  - override /model: kv14m_wide
+  - override /dataset: synthetic_kv
+  - _self_
+
+dataset:
+  synthetic_num_pairs: 4095
+  synthetic_num_docs: 2097152
+
+training:
+  exp_name: ext-8K-kv14m-wide-ip-ttt-conv-embedding-mb8192-kv-token-250M
+  resume_exp_name: pretrain-8K-kv14m-wide-fa-kv-10Ksteps
+  wandb_project: thesis-kv14m-wide
+  wandb_tags: [extension, ip-ttt, treatment, conv-embedding, kv, 8K, token-budget, 250M, mb-8192, kv14m-wide, stateful-swa, swafull-fix-rerun]
+  exp_folder: kv14m-wide-kv-pretrain
+  load_part: params
+  train_mode: pretrain
+  seq_length: 8192
+  global_batch_size: 64
+  accum_steps: 8
+  total_steps: 120
+  num_evals: 3
+  max_eval_batches: 16
+
+  optimizer_outer:
+    lr_decay_steps: 120
+    lr_warmup_steps: 12
+
+model:
+  seq_modeling_block: SWA
+  force_flash: False
+  unroll_block_scan: True
+  sliding_window_size: 8192
+  mini_batch_size: 8192
+  rope_theta: 500000
+  remat_block: nothing_saveable
+  remat_block_bwd: nothing_saveable
+  remat_mlp: nothing_saveable
+  remat_mlp_bwd: nothing_saveable
+  ip_ttt: true
+  ip_ttt_layers: [1, 3]
+  ip_ttt_chunk: 1024
+  ip_ttt_lr: 3.0
+  ip_ttt_proj: true
+  ip_ttt_target: conv_embedding

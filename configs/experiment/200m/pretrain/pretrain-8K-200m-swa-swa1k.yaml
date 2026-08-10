@@ -1,0 +1,29 @@
+# @package _global_
+defaults:
+  - override /training: 200m/pretrain
+  - override /model: 200m
+  - override /dataset: fineweb-edu-10bt
+  - _self_
+
+training:
+  exp_name: pretrain-8K-200m-swa-mb2048-swa1k
+  wandb_project: thesis-200m
+  wandb_tags: [pretrain, swa, baseline, 1K-window, mb-2048, fineweb-edu-10BT]
+  train_mode: pretrain
+  seq_length: 8192
+  global_batch_size: 64
+  source_seq_length: 8192
+  data_min_seq_length: 8192
+  eval_min_seq_length: 8192
+  source_split: train
+  eval_fraction: 0.05
+
+model:
+  seq_modeling_block: SWA
+  force_flash: False
+  unroll_block_scan: True
+  mini_batch_size: 2048
+  sliding_window_size: 1024
+  rope_theta: 500000
+  remat_block: nothing_saveable
+  remat_block_bwd: nothing_saveable

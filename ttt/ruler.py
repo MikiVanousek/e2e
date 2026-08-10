@@ -6,15 +6,17 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import equinox as eqx
 import hydra
 import jax
 import jax.numpy as jnp
+import numpy as np
 from omegaconf import OmegaConf, open_dict
 from tqdm import tqdm
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 from ttt.config import Config, register_configs
 from ttt.infra.checkpoint import Checkpointer, unify_dict_with_eqx_module
@@ -105,6 +107,72 @@ def _append_jsonl(path: Path, rows: list[dict]) -> None:
     with path.open("a", encoding="utf-8", buffering=1) as f:
         for row in rows:
             f.write(json.dumps(row) + "\n")
+
+
+def _make_truncated_tokenizer(original, target_vocab_size: int):
+    """Mirror the training-time truncated Llama-3 BPE tokenizer."""
+    from tokenizers import Tokenizer
+    from tokenizers.models import BPE
+
+    tok_json = json.loads(original.backend_tokenizer.to_str())
+    original_merges = tok_json["model"]["merges"]
+    original_vocab = tok_json["model"]["vocab"]
+
+    def parts(merge):
+        return tuple(merge.split(" ")) if isinstance(merge, str) else tuple(merge)
+
+    all_merge_results = {"".join(parts(merge)) for merge in original_merges}
+    added_strs = {token["content"] for token in tok_json.get("added_tokens", [])}
+    base_tokens = sorted(
+        [
+            (token, token_id)
+            for token, token_id in original_vocab.items()
+            if token not in all_merge_results and token not in added_strs
+        ],
+        key=lambda item: item[1],
+    )
+
+    num_merges = target_vocab_size - len(base_tokens)
+    if num_merges <= 0:
+        raise ValueError(f"target_vocab_size={target_vocab_size} is too small for {len(base_tokens)} base tokens")
+
+    valid_tokens = {token for token, _ in base_tokens}
+    kept_merges: list[tuple[str, str]] = []
+    for merge in original_merges:
+        if len(kept_merges) >= num_merges:
+            break
+        left, right = parts(merge)
+        result = left + right
+        if left in valid_tokens and right in valid_tokens and result not in valid_tokens:
+            valid_tokens.add(result)
+            kept_merges.append((left, right))
+
+    new_vocab = {token: i for i, (token, _) in enumerate(base_tokens)}
+    for left, right in kept_merges:
+        new_vocab[left + right] = len(new_vocab)
+
+    tokenizer = Tokenizer(BPE(vocab=new_vocab, merges=kept_merges))
+    tokenizer.pre_tokenizer = original.backend_tokenizer.pre_tokenizer
+    tokenizer.decoder = original.backend_tokenizer.decoder
+    return tokenizer
+
+
+def _load_tokenizer(tokenizer_name: str, cfg: Config):
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    target_vocab_size = int(cfg.model.vocab_size)
+    if target_vocab_size >= tokenizer.vocab_size:
+        return tokenizer, tokenizer_name
+
+    truncated = _make_truncated_tokenizer(tokenizer, target_vocab_size)
+    fast_tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=truncated,
+        clean_up_tokenization_spaces=False,
+    )
+
+    tokenizer_dir = Path(tempfile.mkdtemp(prefix="ruler_tokenizer_"))
+    fast_tokenizer.save_pretrained(tokenizer_dir)
+    print(f"Using truncated tokenizer {tokenizer.vocab_size} -> {target_vocab_size} at {tokenizer_dir}")
+    return fast_tokenizer, str(tokenizer_dir)
 
 
 def _compose_config(args: argparse.Namespace) -> Config:
@@ -236,7 +304,7 @@ def _adapt_e2e_model(model: MetaModel, state: eqx.nn.State, input_ids: jax.Array
 
 
 @eqx.filter_jit
-def _next_token_e2e(model: MetaModel, state: eqx.nn.State, input_ids: jax.Array, token_index: jax.Array) -> jax.Array:
+def _next_token_e2e_logits(model: MetaModel, state: eqx.nn.State, input_ids: jax.Array, token_index: jax.Array) -> jax.Array:
     cfg = model.config
     tokens_per_chunk = cfg.model.mini_batch_size
 
@@ -308,11 +376,11 @@ def _next_token_e2e(model: MetaModel, state: eqx.nn.State, input_ids: jax.Array,
         unroll=cfg.model.unroll_inner_scan,
     )
     logits = jnp.sum(selected_logits, axis=0)
-    return jnp.argmax(logits).astype(jnp.int32)
+    return logits
 
 
 @eqx.filter_jit
-def _next_token_e2e_no_ttt(model: MetaModel, state: eqx.nn.State, input_ids: jax.Array, token_index: jax.Array) -> jax.Array:
+def _next_token_e2e_no_ttt_logits(model: MetaModel, state: eqx.nn.State, input_ids: jax.Array, token_index: jax.Array) -> jax.Array:
     cfg = model.config
     tokens_per_chunk = cfg.model.mini_batch_size
 
@@ -361,7 +429,49 @@ def _next_token_e2e_no_ttt(model: MetaModel, state: eqx.nn.State, input_ids: jax
         unroll=cfg.model.unroll_inner_scan,
     )
     logits = jnp.sum(selected_logits, axis=0)
+    return logits
+
+
+def _next_token_e2e(model: MetaModel, state: eqx.nn.State, input_ids: jax.Array, token_index: jax.Array) -> jax.Array:
+    logits = _next_token_e2e_logits(model, state, input_ids, token_index)
     return jnp.argmax(logits).astype(jnp.int32)
+
+
+def _next_token_e2e_no_ttt(model: MetaModel, state: eqx.nn.State, input_ids: jax.Array, token_index: jax.Array) -> jax.Array:
+    logits = _next_token_e2e_no_ttt_logits(model, state, input_ids, token_index)
+    return jnp.argmax(logits).astype(jnp.int32)
+
+
+def _validate_e2e_ttt(model: MetaModel, state: eqx.nn.State, input_ids: jax.Array) -> None:
+    chunk_size = model.config.model.mini_batch_size
+    before_update = jnp.asarray(chunk_size - 1, dtype=jnp.int32)
+    after_update = jnp.asarray(2 * chunk_size - 1, dtype=jnp.int32)
+
+    active_before = _next_token_e2e_logits(model, state, input_ids, before_update)
+    off_before = _next_token_e2e_no_ttt_logits(model, state, input_ids, before_update)
+    np.testing.assert_allclose(np.asarray(active_before), np.asarray(off_before), rtol=0, atol=0)
+
+    active_after = _next_token_e2e_logits(model, state, input_ids, after_update)
+    off_after = _next_token_e2e_no_ttt_logits(model, state, input_ids, after_update)
+    update_delta = float(jnp.max(jnp.abs(active_after - off_after)))
+    if update_delta <= 1e-6:
+        raise AssertionError(f"E2E TTT did not change logits after a completed chunk: max delta={update_delta}")
+
+    future_ids = input_ids.at[2 * chunk_size :].set(jnp.flip(input_ids[2 * chunk_size :]))
+    active_with_changed_future = _next_token_e2e_logits(model, state, future_ids, after_update)
+    np.testing.assert_allclose(np.asarray(active_after), np.asarray(active_with_changed_future), rtol=0, atol=0)
+
+    selected = _next_token_e2e(model, state, input_ids, after_update)
+    expected = jnp.argmax(active_after).astype(jnp.int32)
+    if int(selected) != int(expected):
+        raise AssertionError("RULER generation did not select the active E2E logits")
+
+    print(
+        "E2E RULER validation passed: "
+        f"pre-update max delta=0, post-update max delta={update_delta:.6g}, "
+        "future-token invariance passed, generation dispatch uses active logits.",
+        flush=True,
+    )
 
 
 def _generate_greedy(
@@ -454,19 +564,20 @@ def _predict_task(
 ) -> None:
     task_file = data_dir / task / "validation.jsonl"
     pred_file = pred_dir / f"{task}.jsonl"
-    done = {row["index"] for row in _read_jsonl(pred_file)} if pred_file.exists() else set()
-    rows = [row for row in _read_jsonl(task_file) if row["index"] not in done]
+    done = {row["input"] for row in _read_jsonl(pred_file)} if pred_file.exists() else set()
+    rows = [row for row in _read_jsonl(task_file) if row["input"] not in done]
     tokens_to_generate = _ruler_task_tokens_to_generate(ruler_dir, task)
     if args.tokens_to_generate_limit is not None:
         tokens_to_generate = min(tokens_to_generate, args.tokens_to_generate_limit)
 
     outputs = []
     for row in tqdm(rows, desc=f"Predicting {task}"):
+        prompt = row["input"] + row.get("answer_prefix", "")
         pred = _generate_greedy(
             model,
             state,
             tokenizer,
-            row["input"],
+            prompt,
             max_seq_length=args.max_seq_length,
             tokens_to_generate=tokens_to_generate,
             eos_token_id=tokenizer.eos_token_id,
@@ -481,6 +592,7 @@ def _predict_task(
                 "others": row.get("others", {}),
                 "truncation": row.get("truncation", -1),
                 "length": row.get("length", -1),
+                "answer_prefix": row.get("answer_prefix", ""),
             }
         )
         _append_jsonl(pred_file, outputs)
@@ -508,6 +620,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tokenizer-name", default="meta-llama/Llama-3.1-8B")
     parser.add_argument("--tokens-to-generate-limit", type=int)
     parser.add_argument("--e2e-ttt-off", action="store_true")
+    parser.add_argument("--validate-e2e-only", action="store_true")
     parser.add_argument("--num-devices", type=int, default=1)
     parser.add_argument("--jax-cache-dir", default="/tmp/jax_cache")
     parser.add_argument("--download-aux-data", action=argparse.BooleanOptionalAction, default=True)
@@ -521,6 +634,22 @@ def main() -> None:
     args = parse_args()
     os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.95")
 
+    cfg = _compose_config(args)
+    if args.validate_e2e_only:
+        if cfg.training.train_mode != "meta":
+            raise ValueError("--validate-e2e-only requires a meta-trained E2E experiment")
+        model, state, mesh = _load_model(cfg)
+        input_ids = jax.random.randint(
+            jax.random.PRNGKey(0),
+            (args.max_seq_length,),
+            minval=0,
+            maxval=cfg.model.vocab_size,
+            dtype=jnp.int32,
+        )
+        with mesh:
+            _validate_e2e_ttt(model, state, input_ids)
+        return
+
     ruler_dir = args.ruler_dir.resolve()
     _ensure_ruler(ruler_dir)
     compat_dir = _ensure_eval_compat(args.output_root.resolve() / "_compat")
@@ -530,6 +659,9 @@ def main() -> None:
     env["PATH"] = f"{Path(sys.executable).parent}:{env.get('PATH', '')}"
     if args.download_aux_data:
         _download_ruler_aux_data(ruler_dir, env)
+
+    tokenizer, ruler_tokenizer_name = _load_tokenizer(args.tokenizer_name, cfg)
+    args.tokenizer_name = ruler_tokenizer_name
 
     tasks = DEFAULT_SYNTHETIC_TASKS if args.tasks == "all" else [task.strip() for task in args.tasks.split(",") if task.strip()]
     run_name = args.checkpoint_exp_name or Path(args.experiment).name
@@ -542,9 +674,7 @@ def main() -> None:
     for task in tasks:
         _prepare_task(ruler_dir, task, args, env, data_dir)
 
-    cfg = _compose_config(args)
     model, state, mesh = _load_model(cfg)
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
 
     with mesh:
         for task in tasks:

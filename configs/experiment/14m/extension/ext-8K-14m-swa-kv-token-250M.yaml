@@ -1,0 +1,37 @@
+# @package _global_
+defaults:
+  - override /training: 14m/pretrain-8K
+  - override /model: 14m
+  - override /dataset: synthetic_kv
+  - _self_
+
+dataset:
+  synthetic_num_pairs: 4095
+
+training:
+  exp_name: ext-8K-14m-swa-kv-token-250M
+  resume_exp_name: pretrain-14m-fa
+  wandb_project: thesis-14m
+  wandb_tags: [extension, swa, baseline, kv, 8K, token-budget, 250M, stateful-swa, swafull-fix-rerun]
+  load_part: params
+  train_mode: pretrain
+  seq_length: 8192
+  global_batch_size: 64
+  accum_steps: 8
+  total_steps: 120
+  num_evals: 1
+
+  optimizer_outer:
+    lr_decay_steps: 120
+    lr_warmup_steps: 12
+
+model:
+  seq_modeling_block: SWA
+  force_flash: False
+  unroll_block_scan: True
+  sliding_window_size: 8192
+  mini_batch_size: 1024
+  rope_theta: 500000
+  remat_block: nothing_saveable
+  remat_block_bwd: nothing_saveable
+  intermediate_size: 832

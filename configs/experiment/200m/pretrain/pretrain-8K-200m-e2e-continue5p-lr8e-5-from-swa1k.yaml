@@ -1,0 +1,53 @@
+# @package _global_
+defaults:
+  - override /training: 200m/pretrain
+  - override /model: 200m
+  - override /dataset: fineweb-edu-10bt
+  - _self_
+
+training:
+  exp_name: pretrain-8K-200m-e2e-continue5p-lr8e-5-from-swa1k
+  wandb_project: thesis-200m-pretrained-ttt
+  wandb_tags: [pretrained-ttt, continue, e2e, treatment, 8K, 1K-window, budget-5p, from-swa, no-flash, lr-8e-5]
+  train_mode: meta
+  load_part: params
+  resume_exp_name: pretrain-8K-200m-swa-mb2048-swa1k
+  resume_step: 7629
+  total_steps: 382
+  seq_length: 8192
+  global_batch_size: 64
+  accum_steps: 8
+  num_evals: 3
+  num_checkpoints: 10
+  checkpoint_interval_steps: 100
+  ilr_warmup_steps: 38
+  source_seq_length: 8192
+  data_min_seq_length: 8192
+  eval_min_seq_length: 8192
+  source_split: train
+  eval_fraction: 0.05
+  spec_inner: ["language_model.**.suffix_blocks.feed_forward_prime.**"]
+  ilr_init: 1
+  optimizer_inner:
+    optimizer_type: sgd
+    lr: 1
+    clip_gradient: 1.0
+  optimizer_outer:
+    lr: 8.0e-5
+    end_lr: 1.0e-5
+    lr_decay_steps: 382
+    lr_warmup_steps: 38
+
+model:
+  seq_modeling_block: SWA
+  force_flash: False
+  unroll_block_scan: True
+  mini_batch_size: 1024
+  sliding_window_size: 1024
+  rope_theta: 500000
+  prime: True
+  suffix_len: 3
+  prime_intermediate_size: 2816
+  prime_zero_init: True
+  remat_block: nothing_saveable
+  remat_block_bwd: nothing_saveable

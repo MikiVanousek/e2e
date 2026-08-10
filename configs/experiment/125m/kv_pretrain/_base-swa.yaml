@@ -1,0 +1,35 @@
+# @package _global_
+defaults:
+  - override /training: 125m/pretrain-8K
+  - override /model: 125m
+  - override /dataset: synthetic_kv
+  - _self_
+
+dataset:
+  synthetic_num_docs: 2097152
+
+training:
+  wandb_project: thesis-125m-kv-pretrain
+  wandb_tags: [pretrain, kv, scratch, swa, stateful-swa, swafull-fix-rerun]
+  exp_folder: kv-pretrain
+  load_part: none
+  resume_exp_name: ""
+  train_mode: pretrain
+  total_steps: 15000
+  num_evals: 1
+  max_eval_batches: 150
+
+  optimizer_outer:
+    lr_decay_steps: 15000
+    lr_warmup_steps: 1500
+
+model:
+  output_size: 128256
+  seq_modeling_block: SWA
+  force_flash: False
+  unroll_block_scan: True
+  sliding_window_size: 1024
+  mini_batch_size: 1024
+  rope_theta: 500000
+  remat_block: nothing_saveable
+  remat_block_bwd: nothing_saveable

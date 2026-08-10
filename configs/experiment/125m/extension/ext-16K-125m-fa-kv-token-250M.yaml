@@ -1,0 +1,18 @@
+# @package _global_
+defaults:
+  - 125m/extension/_base-fa
+  - override /dataset: synthetic_kv
+  - _self_
+
+training:
+  exp_name: ext-16K-125m-fa-kv-token-250M
+  wandb_tags: [extension, fa, baseline, kv, 16K, token-budget, 250M]
+  seq_length: 16384
+  global_batch_size: 64
+  accum_steps: 8
+  total_steps: 120
+  num_evals: 1
+
+  optimizer_outer:
+    lr_decay_steps: 120
+    lr_warmup_steps: 12

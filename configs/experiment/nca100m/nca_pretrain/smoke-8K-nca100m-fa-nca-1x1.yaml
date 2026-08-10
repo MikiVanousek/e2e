@@ -1,0 +1,16 @@
+# @package _global_
+defaults:
+  - nca100m/nca_pretrain/_base-fa
+  - override /training: nca100m/pretrain-8K-smoke
+  - override /dataset: nca_raw_8k_1x1_full
+  - _self_
+
+training:
+  exp_name: smoke-8K-nca100m-fa-nca-1x1
+  wandb_tags: [pretrain, nca, scratch, fa, 8K, patch-1x1, smoke]
+
+model:
+  vocab_size: 12
+  output_size: 12
+  bos_token_id: 10
+  eos_token_id: 11

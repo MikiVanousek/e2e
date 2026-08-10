@@ -1,0 +1,35 @@
+# @package _global_
+defaults:
+  - override /training: 14m/pretrain-8K
+  - override /model: 14m
+  - override /dataset: nca_raw_8k_1x1
+  - _self_
+
+training:
+  wandb_project: thesis-14m-nca-pretrain
+  exp_folder: nca-pretrain
+  exp_name: pretrain-8K-14m-fa-nca-1x1-50steps
+  wandb_tags: [pretrain, nca, scratch, fa, 8K, patch-1x1, steps-50]
+  load_part: none
+  resume_exp_name: ""
+  train_mode: pretrain
+  total_steps: 50
+  num_evals: 5
+  max_eval_batches: 20
+
+  optimizer_outer:
+    lr_decay_steps: 50
+    lr_warmup_steps: 5
+
+model:
+  vocab_size: 12
+  output_size: 12
+  bos_token_id: 10
+  eos_token_id: 11
+  seq_modeling_block: self_attention
+  force_flash: True
+  rope_theta: 500000
+  remat_block: nothing_saveable
+  remat_block_bwd: nothing_saveable
+  intermediate_size: 832
+  mini_batch_size: 8192

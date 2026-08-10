@@ -5,4 +5,5 @@ wandb
 outputs
 multirun
 experiments
+checkpoints/
 *.csv

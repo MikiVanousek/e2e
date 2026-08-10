@@ -1,0 +1,27 @@
+# @package _global_
+defaults:
+  - kv14m_wide/kv_pretrain/_base-fa
+  - _self_
+
+training:
+  exp_name: pretrain-8K-kv14m-wide-ip-ttt-conv-embedding-mb8192-intermediate2048-swa1k-kv-10Ksteps
+  wandb_tags: [pretrain, kv, scratch, ip-ttt, conv-embedding, swa, 1K-window, mb-8192, intermediate-2048, 8K, steps-10K, kv14m-wide, stateful-swa, swafull-fix-rerun]
+  seq_length: 8192
+  global_batch_size: 256
+  accum_steps: 2
+
+model:
+  seq_modeling_block: SWA
+  force_flash: False
+  unroll_block_scan: True
+  sliding_window_size: 1024
+  mini_batch_size: 8192
+  intermediate_size: 2048
+  remat_mlp: nothing_saveable
+  remat_mlp_bwd: nothing_saveable
+  ip_ttt: true
+  ip_ttt_layers: [1, 3]
+  ip_ttt_chunk: 1024
+  ip_ttt_lr: 3.0
+  ip_ttt_proj: true
+  ip_ttt_target: conv_embedding

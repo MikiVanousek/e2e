@@ -1,0 +1,18 @@
+# @package _global_
+defaults:
+  - 125m/extension/_base-e2e
+  - override /dataset: synthetic_kv
+  - _self_
+
+training:
+  exp_name: ext-32K-125m-e2e-kv-token-250M
+  wandb_tags: [extension, e2e, treatment, kv, 32K, token-budget, 250M]
+  seq_length: 32768
+  global_batch_size: 32
+  accum_steps: 8
+  total_steps: 120
+  num_evals: 1
+
+  optimizer_outer:
+    lr_decay_steps: 120
+    lr_warmup_steps: 12

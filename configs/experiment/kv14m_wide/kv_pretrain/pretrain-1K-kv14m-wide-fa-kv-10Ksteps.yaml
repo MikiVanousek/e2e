@@ -1,0 +1,17 @@
+# @package _global_
+defaults:
+  - kv14m_wide/kv_pretrain/_base-fa
+  - _self_
+
+dataset:
+  synthetic_num_docs: 8388608
+
+training:
+  exp_name: pretrain-1K-kv14m-wide-fa-kv-10Ksteps
+  wandb_tags: [pretrain, kv, scratch, fa, 1K, steps-10K, kv14m-wide]
+  seq_length: 1024
+  global_batch_size: 2048
+  accum_steps: 2
+
+model:
+  mini_batch_size: 1024

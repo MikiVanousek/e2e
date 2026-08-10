@@ -26,7 +26,7 @@ M = MetaModel.MetricType
 
 
 @eqx.filter_jit
-@eqx.filter_vmap(axis_name="data_parallel", in_axes=(None, 0, None), out_axes=None)
+@eqx.filter_vmap(axis_name="data_parallel", in_axes=(None, 0, None), out_axes=(None, 0))
 def eval_step_fn(
     meta_model: MetaModel,
     seq: Batch,
@@ -44,11 +44,11 @@ def eval_step_fn(
 
     _avg_loss, avg_metrics = jax.lax.pmean((loss, metrics), axis_name="data_parallel")  # Reduce over devices
 
-    return avg_metrics
+    return avg_metrics, metrics[M.loss].mean()
 
 
 @eqx.filter_jit
-@eqx.filter_vmap(axis_name="data_parallel", in_axes=(None, 0, None), out_axes=None)
+@eqx.filter_vmap(axis_name="data_parallel", in_axes=(None, 0, None), out_axes=(None, 0))
 def eval_step_fn_no_ttt(
     meta_model: MetaModel,
     seq: Batch,
@@ -57,11 +57,11 @@ def eval_step_fn_no_ttt(
     """Evaluate without TTT inner loop (pretrain-mode forward pass)."""
     loss, metrics = meta_model.loss_for_sequence(seq, state, train_mode="pretrain")
     _avg_loss, avg_metrics = jax.lax.pmean((loss, metrics), axis_name="data_parallel")
-    return avg_metrics
+    return avg_metrics, metrics[M.loss].mean()
 
 
 @eqx.filter_jit
-@eqx.filter_vmap(axis_name="data_parallel", in_axes=(None, 0, None), out_axes=None)
+@eqx.filter_vmap(axis_name="data_parallel", in_axes=(None, 0, None), out_axes=(None, 0))
 def eval_step_fn_no_ip_ttt(
     meta_model: MetaModel,
     seq: Batch,
@@ -71,7 +71,7 @@ def eval_step_fn_no_ip_ttt(
     model_no_ttt = meta_model.with_ip_ttt_disabled()
     loss, metrics = model_no_ttt.loss_for_sequence(seq, state)
     _avg_loss, avg_metrics = jax.lax.pmean((loss, metrics), axis_name="data_parallel")
-    return avg_metrics
+    return avg_metrics, metrics[M.loss].mean()
 
 
 class Evaluator:
@@ -87,7 +87,7 @@ class Evaluator:
         wandb_logger: WandbLogger,
         log_dir: Path,
     ):
-        self.train_holdout_loader = (
+        train_holdout = (
             lm_dataset(
                 dataset_kind=config.dataset.kind,
                 hf_dataset=config.dataset.hf_dataset,
@@ -114,6 +114,7 @@ class Evaluator:
                 nca_patch_size=config.dataset.nca_patch_size,
                 nca_num_colors=config.dataset.nca_num_colors,
                 nca_mask_delimiters=config.dataset.nca_mask_delimiters,
+                return_source=True,
             )
             if not config.training.dummy_dataset
             else dummy_dataset(
@@ -124,6 +125,11 @@ class Evaluator:
                 num_tokens=2**25,
             )
         )
+        if config.training.dummy_dataset:
+            self.train_holdout_loader = train_holdout
+            self.train_holdout_source = None
+        else:
+            self.train_holdout_loader, self.train_holdout_source = train_holdout
         self.data_sharding = data_sharding
         self.config = config
         self.global_batch_size = global_batch_size
@@ -153,6 +159,9 @@ class Evaluator:
     def eval_fn(self, model: MetaModel, state: eqx.nn.State, step: int, max_batches: int | None = None):
         pid = jax.process_index()
         is_meta = self.config.training.train_mode == "meta"
+        save_document_metrics = self.config.training.save_document_metrics
+        if save_document_metrics and (jax.process_count() != 1 or not hasattr(self.train_holdout_source, "document_ids")):
+            raise ValueError("save_document_metrics requires a single-process Hugging Face evaluation dataset")
 
         loader_dict = {"train_holdout": self.train_holdout_loader}
 
@@ -185,18 +194,26 @@ class Evaluator:
 
             results = []
             results_no_ttt = []
+            sequence_losses = []
+            sequence_losses_no_ttt = []
             for i, batch in enumerate(tqdm(batch_loader, desc=f"Evaluating {eval_name}", total=n_batches, disable=pid != 0)):
                 if i >= n_batches:
                     break
-                result = eval_step_fn(model, batch, state)
+                result, batch_sequence_losses = eval_step_fn(model, batch, state)
                 results.append(result)
+                if save_document_metrics:
+                    sequence_losses.append(np.asarray(jax.device_get(batch_sequence_losses), dtype=np.float64))
 
                 if is_meta:
-                    result_no_ttt = eval_step_fn_no_ttt(model, batch, state)
+                    result_no_ttt, batch_sequence_losses_no_ttt = eval_step_fn_no_ttt(model, batch, state)
                     results_no_ttt.append(result_no_ttt)
+                    if save_document_metrics:
+                        sequence_losses_no_ttt.append(np.asarray(jax.device_get(batch_sequence_losses_no_ttt), dtype=np.float64))
                 elif is_ip_ttt:
-                    result_no_ttt = eval_step_fn_no_ip_ttt(model, batch, state)
+                    result_no_ttt, batch_sequence_losses_no_ttt = eval_step_fn_no_ip_ttt(model, batch, state)
                     results_no_ttt.append(result_no_ttt)
+                    if save_document_metrics:
+                        sequence_losses_no_ttt.append(np.asarray(jax.device_get(batch_sequence_losses_no_ttt), dtype=np.float64))
 
             eval_metrics[eval_name], eval_stds[eval_name], eval_counts[eval_name] = _aggregate(results)
 
@@ -204,7 +221,27 @@ class Evaluator:
                 k = f"{eval_name}_no_ttt"
                 eval_metrics[k], eval_stds[k], eval_counts[k] = _aggregate(results_no_ttt)
 
+            if save_document_metrics:
+                self._save_document_metrics(eval_name, sequence_losses)
+                if sequence_losses_no_ttt:
+                    self._save_document_metrics(f"{eval_name}_no_ttt", sequence_losses_no_ttt)
+
         self.log_eval_results(eval_metrics, eval_stds, eval_counts, step)
+
+    def _save_document_metrics(self, eval_name: str, sequence_losses: list[np.ndarray]) -> None:
+        losses = np.concatenate(sequence_losses)
+        document_ids = self.train_holdout_source.document_ids[: len(losses)]
+        if len(document_ids) != len(losses):
+            raise ValueError(f"Expected {len(losses)} document IDs, got {len(document_ids)}")
+
+        unique_ids, inverse = np.unique(document_ids, return_inverse=True)
+        tokens_per_sequence = self.config.training.seq_length
+        nll_sum = np.bincount(inverse, weights=losses * tokens_per_sequence)
+        token_count = np.bincount(inverse, weights=np.full(len(losses), tokens_per_sequence, dtype=np.int64)).astype(np.int64)
+
+        path = self.log_dir / f"{eval_name}_document_metrics.npz"
+        np.savez(path, document_id=unique_ids, nll_sum=nll_sum, token_count=token_count)
+        self.wandb_logger.save(path, self.log_dir)
 
     @staticmethod
     def _ci95_width_pct(mean_val: float, std_val: float, n: int) -> float:

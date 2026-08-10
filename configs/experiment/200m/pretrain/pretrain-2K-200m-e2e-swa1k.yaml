@@ -1,0 +1,40 @@
+# @package _global_
+defaults:
+  - override /training: 200m/pretrain
+  - override /model: 200m
+  - override /dataset: fineweb-edu-10bt
+  - _self_
+
+training:
+  exp_name: pretrain-2K-200m-e2e-swa1k
+  wandb_project: thesis-200m
+  wandb_tags: [pretrain, e2e, treatment, 1K-window, ttt-batch-512, fineweb-edu-10BT]
+  train_mode: meta
+  seq_length: 2048
+  global_batch_size: 256
+  accum_steps: 8
+  num_checkpoints: 20
+  source_seq_length: 8192
+  data_min_seq_length: 8192
+  eval_min_seq_length: 8192
+  source_split: train
+  eval_fraction: 0.05
+  spec_inner: ["language_model.**.suffix_blocks.feed_forward_prime.**"]
+  ilr_init: 1
+  optimizer_inner:
+    optimizer_type: sgd
+    lr: 1
+    clip_gradient: 1.0
+
+model:
+  seq_modeling_block: SWA
+  force_flash: False
+  unroll_block_scan: True
+  mini_batch_size: 1024
+  sliding_window_size: 1024
+  rope_theta: 500000
+  prime: True
+  suffix_len: 3
+  prime_intermediate_size: 1
+  remat_block: nothing_saveable
+  remat_block_bwd: nothing_saveable

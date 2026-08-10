@@ -8,6 +8,7 @@ defaults:
 training:
   resume_exp_name: pretrain-125m-ip-ttt
   wandb_project: thesis-125m
+  wandb_tags: [extension, ip-ttt, treatment, stateful-swa, swafull-fix-rerun]
   load_part: params
   num_evals: 2
   train_mode: pretrain
@@ -16,8 +17,11 @@ training:
   eval_fraction: 0.05
 
 model:
-  seq_modeling_block: SWAFull
-  force_flash: True
+  seq_modeling_block: SWA
+  force_flash: False
+  unroll_block_scan: True
+  # Concrete IP-TTT extension configs must override this to training.seq_length.
+  mini_batch_size: 1024
   sliding_window_size: 8192
   rope_theta: 500000
   remat_block: nothing_saveable

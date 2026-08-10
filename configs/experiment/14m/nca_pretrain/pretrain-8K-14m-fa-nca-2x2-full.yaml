@@ -1,0 +1,29 @@
+# @package _global_
+defaults:
+  - override /training: 14m/pretrain-8K
+  - override /model: 14m
+  - override /dataset: nca_raw_8k_2x2_full
+  - _self_
+
+training:
+  wandb_project: thesis-14m-nca-pretrain
+  exp_folder: nca-pretrain
+  exp_name: pretrain-8K-14m-fa-nca-2x2-full
+  wandb_tags: [pretrain, nca, scratch, fa, 8K, patch-2x2, full]
+  load_part: none
+  resume_exp_name: ""
+  train_mode: pretrain
+  max_eval_batches: 64
+
+model:
+  vocab_size: 10002
+  output_size: 10002
+  bos_token_id: 10000
+  eos_token_id: 10001
+  seq_modeling_block: self_attention
+  force_flash: True
+  rope_theta: 500000
+  remat_block: nothing_saveable
+  remat_block_bwd: nothing_saveable
+  intermediate_size: 832
+  mini_batch_size: 8192

@@ -1,0 +1,30 @@
+# @package _global_
+defaults:
+  - kv14m_wide/kv_pretrain/_base-fa
+  - _self_
+
+training:
+  exp_name: pretrain-8K-kv14m-wide-swa1k-prime-no-ttt-kv-10Ksteps
+  wandb_tags: [pretrain, kv, scratch, swa, 1K-window, prime, no-ttt, 8K, steps-10K, kv14m-wide]
+  train_mode: meta
+  seq_length: 8192
+  global_batch_size: 256
+  accum_steps: 8
+  spec_inner: ["language_model.**.suffix_blocks.feed_forward_prime.**"]
+  ilr_warmup_steps: 0
+  ilr_init: 0.0
+
+  optimizer_inner:
+    optimizer_type: sgd
+    lr: 0.0
+    clip_gradient: 1.0
+
+model:
+  seq_modeling_block: SWA
+  force_flash: false
+  unroll_block_scan: true
+  mini_batch_size: 1024
+  sliding_window_size: 1024
+  prime: true
+  prime_zero_init: true
+  suffix_len: 1

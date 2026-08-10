@@ -1,0 +1,10 @@
+defaults:
+  - /training/nca100m/pretrain-8K@_here_
+
+total_steps: 20
+num_evals: 2
+max_eval_batches: 8
+
+optimizer_outer:
+  lr_decay_steps: 20
+  lr_warmup_steps: 2

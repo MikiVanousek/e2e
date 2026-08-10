@@ -5,11 +5,11 @@ defaults:
 
 training:
   exp_name: ext-64K-125m-swa
-  wandb_tags: [extension, swa, baseline, 64K]
+  wandb_tags: [extension, swa, baseline, 64K, stateful-swa, swafull-fix-rerun]
   seq_length: 65536
   global_batch_size: 16
   accum_steps: 16
   eval_batch_size: 2
 
 model:
-  mini_batch_size: 65536
+  mini_batch_size: 1024

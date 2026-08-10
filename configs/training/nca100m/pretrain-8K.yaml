@@ -1,0 +1,27 @@
+# Full pass over the current NCA full datasets:
+# 8192 rows / global_batch_size 64 = 128 steps/epoch; 640 steps = 5 epochs.
+defaults:
+  - /training/base_training@_global_.training
+
+dataset_name: nca_raw_8k
+data_split: "train"
+eval_split: "validation"
+
+total_steps: 640
+seq_length: 8192
+global_batch_size: 64
+accum_steps: 2
+ilr_warmup_steps: 64
+max_eval_batches: 64
+
+optimizer_outer:
+  optimizer_type: adamw
+  b1: 0.9
+  b2: 0.95
+  clip_gradient: 1.0
+  end_lr: 1e-05
+  init_lr: 0.0
+  lr: 3e-03
+  lr_decay_steps: 640
+  lr_warmup_steps: 64
+  weight_decay: 0.1

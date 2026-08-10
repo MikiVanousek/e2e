@@ -1,0 +1,15 @@
+# @package _global_
+defaults:
+  - nca100m/nca_pretrain/_base-fa
+  - override /dataset: nca_raw_8k_1x1_full
+  - _self_
+
+training:
+  exp_name: pretrain-8K-nca100m-fa-nca-1x1-full
+  wandb_tags: [pretrain, nca, scratch, fa, 8K, patch-1x1, full]
+
+model:
+  vocab_size: 12
+  output_size: 12
+  bos_token_id: 10
+  eos_token_id: 11

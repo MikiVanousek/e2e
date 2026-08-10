@@ -1,0 +1,14 @@
+# @package _global_
+defaults:
+  - kv14m_wide/kv_pretrain/_base-fa
+  - _self_
+
+training:
+  exp_name: pretrain-8K-kv14m-wide-fa-kv-10Ksteps
+  wandb_tags: [pretrain, kv, scratch, fa, 8K, steps-10K, kv14m-wide]
+  seq_length: 8192
+  global_batch_size: 256
+  accum_steps: 2
+
+model:
+  mini_batch_size: 8192

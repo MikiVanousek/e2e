@@ -100,6 +100,10 @@ class HFTokenizedDataset(grain.RandomAccessDataSource):
     def __len__(self):
         return len(self._chunk_index)
 
+    @property
+    def document_ids(self) -> np.ndarray:
+        return np.asarray([doc_idx for doc_idx, _ in self._chunk_index], dtype=np.int64)
+
 
 class SyntheticKVDataset(grain.RandomAccessDataSource):
     """On-the-fly token associative-recall documents.
@@ -319,7 +323,8 @@ def lm_dataset(
     nca_patch_size: int = 2,
     nca_num_colors: int = 10,
     nca_mask_delimiters: bool = True,
-) -> grain.MapDataset:
+    return_source: bool = False,
+) -> grain.MapDataset | tuple[grain.MapDataset, grain.RandomAccessDataSource]:
     if shard_index is None:
         shard_index = jax.process_index()
     if shard_count is None:
@@ -391,6 +396,8 @@ def lm_dataset(
         print(f"Trimming dataset. Length {dataset_length} → {trimmed_length}.")
 
     dataset = dataset[shard_index::shard_count]
+    if return_source:
+        return dataset, source
     return dataset
 
 

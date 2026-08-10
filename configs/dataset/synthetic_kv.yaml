@@ -1,0 +1,7 @@
+defaults:
+  - /dataset/base_dataset@_here_
+
+kind: synthetic_kv
+synthetic_num_pairs: 32768
+synthetic_num_docs: 8192
+synthetic_seed: 0

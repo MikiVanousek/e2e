@@ -1,0 +1,11 @@
+defaults:
+  - /model/base_model@_global_.model
+
+name: nca100m
+hidden_size: 768
+intermediate_size: 2048
+num_hidden_layers: 12
+num_attention_heads: 12
+initializer_range: 0.02
+rms_norm_eps: 1.0e-6
+tie_word_embeddings: true

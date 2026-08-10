@@ -1,0 +1,36 @@
+# @package _global_
+defaults:
+  - override /training: 200m/pretrain
+  - override /model: 200m
+  - override /dataset: fineweb-edu-10bt
+  - _self_
+
+training:
+  exp_name: pretrain-1K-200m-ip-ttt-conv-embedding-b1024-mb1024-b200-ckpt500-swa1k
+  wandb_project: thesis-200m
+  wandb_tags: [pretrain, ip-ttt, treatment, conv-embedding, 1K-window, ttt-batch-1024, mb-1024, fineweb-edu-10BT]
+  seq_length: 1024
+  global_batch_size: 512
+  accum_steps: 16
+  source_seq_length: 8192
+  data_min_seq_length: 8192
+  eval_min_seq_length: 8192
+  source_split: train
+  eval_fraction: 0.05
+  checkpoint_interval_steps: 500
+
+model:
+  seq_modeling_block: SWA
+  force_flash: False
+  unroll_block_scan: True
+  mini_batch_size: 1024
+  sliding_window_size: 1024
+  rope_theta: 500000
+  remat_mlp: nothing_saveable
+  remat_mlp_bwd: nothing_saveable
+  ip_ttt: True
+  ip_ttt_layers: [6, 12]
+  ip_ttt_chunk: 1024
+  ip_ttt_lr: 3
+  ip_ttt_target: conv_embedding
+  ip_ttt_proj: True

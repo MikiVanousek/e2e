@@ -5,7 +5,7 @@ defaults:
 
 training:
   exp_name: ext-64K-125m-ip-ttt
-  wandb_tags: [extension, ip-ttt, treatment, 64K]
+  wandb_tags: [extension, ip-ttt, treatment, 64K, stateful-swa, swafull-fix-rerun]
   seq_length: 65536
   global_batch_size: 16
   accum_steps: 16

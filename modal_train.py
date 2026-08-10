@@ -14,6 +14,7 @@ hf_cache_volume = modal.Volume.from_name("e2e-hf-cache", create_if_missing=True)
 checkpoint_volume = modal.Volume.from_name("e2e-checkpoints", create_if_missing=True)
 jax_cache_volume = modal.Volume.from_name("e2e-jax-cache", create_if_missing=True)
 ruler_volume = modal.Volume.from_name("e2e-ruler", create_if_missing=True)
+kv_recall_volume = modal.Volume.from_name("e2e-kv-recall", create_if_missing=True)
 
 image = (
     modal.Image.from_registry("nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04", add_python="3.12")
@@ -55,14 +56,7 @@ print(f"Downloaded {{len(ds)}} rows")
     print("Dataset cached to volume")
 
 
-@app.function(
-    image=image,
-    gpu="H200",
-    timeout=24 * 3600,
-    secrets=[modal.Secret.from_name("default")],
-    volumes={"/data": hf_cache_volume, "/checkpoints": checkpoint_volume, "/jax_cache": jax_cache_volume},
-)
-def train(
+def _run_train(
     experiment: str,
     wandb_entity: str = "miki-aisle",
     wandb_project: str | None = None,
@@ -113,6 +107,42 @@ def train(
     gpu="H200",
     timeout=24 * 3600,
     secrets=[modal.Secret.from_name("default")],
+    volumes={"/data": hf_cache_volume, "/checkpoints": checkpoint_volume, "/jax_cache": jax_cache_volume},
+)
+def train(
+    experiment: str,
+    wandb_entity: str = "miki-aisle",
+    wandb_project: str | None = None,
+    extra_args: str = "",
+    fast_compile: bool = False,
+    resume: bool = False,
+):
+    _run_train(experiment, wandb_entity, wandb_project, extra_args, fast_compile, resume)
+
+
+@app.function(
+    image=image,
+    gpu="B200",
+    timeout=24 * 3600,
+    secrets=[modal.Secret.from_name("default")],
+    volumes={"/data": hf_cache_volume, "/checkpoints": checkpoint_volume, "/jax_cache": jax_cache_volume},
+)
+def train_b200(
+    experiment: str,
+    wandb_entity: str = "miki-aisle",
+    wandb_project: str | None = None,
+    extra_args: str = "",
+    fast_compile: bool = False,
+    resume: bool = False,
+):
+    _run_train(experiment, wandb_entity, wandb_project, extra_args, fast_compile, resume)
+
+
+@app.function(
+    image=image,
+    gpu="H200",
+    timeout=24 * 3600,
+    secrets=[modal.Secret.from_name("default")],
     volumes={
         "/data": hf_cache_volume,
         "/checkpoints": checkpoint_volume,
@@ -131,6 +161,7 @@ def ruler(
     e2e_ttt_off: bool = False,
     tokenizer_name: str = "meta-llama/Llama-3.1-8B",
     download_aux_data: bool = False,
+    validate_e2e_only: bool = False,
     wandb_entity: str = "miki-aisle",
     wandb_project: str = "thesis-125m",
 ):
@@ -165,12 +196,59 @@ def ruler(
         cmd.extend(["--tokens-to-generate-limit", str(tokens_to_generate_limit)])
     if e2e_ttt_off:
         cmd.append("--e2e-ttt-off")
+    if validate_e2e_only:
+        cmd.append("--validate-e2e-only")
     if not download_aux_data:
         cmd.append("--no-download-aux-data")
 
     subprocess.run(cmd, check=True, cwd="/app", env=env)
     jax_cache_volume.commit()
     ruler_volume.commit()
+
+
+@app.function(
+    image=image,
+    gpu="H200",
+    timeout=24 * 3600,
+    secrets=[modal.Secret.from_name("default")],
+    volumes={
+        "/checkpoints": checkpoint_volume,
+        "/jax_cache": jax_cache_volume,
+        "/kv_recall": kv_recall_volume,
+    },
+)
+def kv_recall(
+    labels: str = "fa,swa",
+    max_docs: int = 4,
+    output_dir: str = "/kv_recall/latest",
+):
+    checkpoint_volume.reload()
+    jax_cache_volume.reload()
+    kv_recall_volume.reload()
+
+    env = os.environ.copy()
+    env["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
+    cmd = [
+        "/root/.local/bin/uv",
+        "run",
+        "--exact",
+        "python",
+        "-m",
+        "ttt.eval_kv_recall",
+        "--labels",
+        labels,
+        "--max-docs",
+        str(max_docs),
+        "--checkpoint-root",
+        "/checkpoints",
+        "--output-dir",
+        output_dir,
+        "--jax-cache-dir",
+        "/jax_cache",
+    ]
+    subprocess.run(cmd, check=True, cwd="/app", env=env)
+    jax_cache_volume.commit()
+    kv_recall_volume.commit()
 
 
 @app.function(
@@ -245,6 +323,21 @@ def ruler_main(
 
 
 @app.local_entrypoint()
+def kv_recall_main(
+    labels: str = "fa,swa",
+    max_docs: int = 4,
+    output_dir: str = "/kv_recall/latest",
+    wait: bool = True,
+):
+    """Run synthetic KV recall eval for selected comma-separated labels."""
+    handle = kv_recall.spawn(labels=labels, max_docs=max_docs, output_dir=output_dir)
+    if not wait:
+        print("Spawned KV recall eval job.")
+        return
+    handle.get()
+
+
+@app.local_entrypoint()
 def main(
     experiment: str = "125m/pretrain/simple",
     wandb_entity: str = "miki-aisle",
@@ -256,17 +349,18 @@ def main(
 ):
     """Train one or more experiments in parallel. `experiment` accepts a comma-separated list."""
     # download_dataset.remote()
-    handles = [
-        train.spawn(
-            experiment=exp.strip(),
+    handles = []
+    for exp in experiment.split(","):
+        exp = exp.strip()
+        train_fn = train_b200 if "e2e" in Path(exp).name else train
+        handles.append(train_fn.spawn(
+            experiment=exp,
             wandb_entity=wandb_entity,
             wandb_project=wandb_project,
             extra_args=extra_args,
             fast_compile=fast_compile,
             resume=resume,
-        )
-        for exp in experiment.split(",")
-    ]
+        ))
     if not wait:
         print(f"Spawned {len(handles)} training job(s).")
         return

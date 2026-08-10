@@ -1,0 +1,47 @@
+# @package _global_
+defaults:
+  - override /training: 14m/pretrain-8K
+  - override /model: kv14m_wide
+  - override /dataset: synthetic_kv
+  - _self_
+
+dataset:
+  synthetic_num_pairs: 4095
+  synthetic_num_docs: 2097152
+
+training:
+  exp_name: ext-8K-kv14m-wide-e2e-ilr1e-4-kv-token-250M
+  resume_exp_name: pretrain-8K-kv14m-wide-fa-kv-10Ksteps
+  wandb_project: thesis-kv14m-wide
+  wandb_tags: [extension, e2e, treatment, kv, 8K, token-budget, 250M, kv14m-wide, ilr-1e-4]
+  exp_folder: kv14m-wide-kv-pretrain
+  load_part: params
+  train_mode: meta
+  seq_length: 8192
+  global_batch_size: 64
+  accum_steps: 8
+  total_steps: 120
+  num_evals: 3
+  max_eval_batches: 16
+  spec_inner: ["language_model.**.suffix_blocks.feed_forward_prime.**"]
+  ilr_init: 0.0001
+
+  optimizer_outer:
+    lr_decay_steps: 120
+    lr_warmup_steps: 12
+
+  optimizer_inner:
+    optimizer_type: sgd
+    lr: 0.0001
+    clip_gradient: 1.0
+
+model:
+  seq_modeling_block: SWA
+  force_flash: False
+  unroll_block_scan: True
+  mini_batch_size: 1024
+  sliding_window_size: 8192
+  rope_theta: 500000
+  prime: True
+  prime_zero_init: True
+  suffix_len: 1
